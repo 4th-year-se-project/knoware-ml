@@ -1,0 +1,7 @@
+Flask==2.3.3
+Flask_Migrate==4.0.4
+flask_sqlalchemy==3.0.5
+langchain==0.0.271
+llama_hub==0.0.25
+pgvector==0.2.1
+SQLAlchemy==2.0.20
