@@ -15,19 +15,19 @@ loader = YoutubeTranscriptReader()
 
 @app.route("/embed_youtube", methods=["POST"])
 def embed_youtube():
-    print("started")
     data = request.json
     video_url = data.get("video_url")
     documents = loader.load_data(ytlinks=[video_url])
     transcript_text = documents[0].text
-    print("loaded")
+    stored_document = models.Document(title=video_url, content=transcript_text)
+    db.session.add(stored_document)
+    db.session.commit()
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=150)
     docs = text_splitter.split_text(transcript_text)
     embeddings = embeddings_model.embed_documents(docs)
-    print("embedded")
     for embedding, doc in zip(embeddings, docs):
-        stored_embedding = models.Document(
-            content=doc, embedding=embedding, title=video_url
+        stored_embedding = models.Embeddings(
+            split_content=doc, embedding=embedding, document_id=stored_document.id
         )
         db.session.add(stored_embedding)
     db.session.commit()
