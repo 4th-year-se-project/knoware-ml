@@ -27,16 +27,16 @@ class Document(Base):
     content = mapped_column(Text)
     children = relationship("Embeddings")
 
-class DocSimilarity(db.Model):
+class DocSimilarity(Base):
     __tablename__ = "doc_similarity"
 
-    id = db.Column(Integer, primary_key=True)
-    new_document_id = db.Column(ForeignKey("document.id"), nullable=False)
-    existing_document_id = db.Column(ForeignKey("document.id"), nullable=False)
-    similarity_score = db.Column(Float, nullable=False)
+    id = mapped_column(Integer, primary_key=True)
+    new_document_id = mapped_column(ForeignKey("document.id"))
+    existing_document_id = mapped_column(ForeignKey("document.id"))
+    similarity_score = mapped_column(Float)
 
-    new_document = db.relationship("Document", foreign_keys=[new_document_id])
-    existing_document = db.relationship("Document", foreign_keys=[existing_document_id])
+    new_document = relationship("Document", foreign_keys=[new_document_id])
+    existing_document = relationship("Document", foreign_keys=[existing_document_id])
 
 
 Base.metadata.create_all(engine)
