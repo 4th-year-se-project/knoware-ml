@@ -25,8 +25,8 @@ def embed_youtube():
     video_url = data.get("video_url")
     documents = loader.load_data(ytlinks=[video_url])
     transcript_text = documents[0].text
-    preprocessed_transcript_text = preprocess_text(transcript_text)
-    stored_document = models.Document(title=video_url, content=preprocessed_transcript_text)
+    #preprocessed_transcript_text = preprocess_text(transcript_text)
+    stored_document = models.Document(title=video_url, content=transcript_text)
     db.session.add(stored_document)
     db.session.commit()
     calculate_and_store_similarity(stored_document.id, transcript_text)
