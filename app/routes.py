@@ -29,7 +29,9 @@ def embed_youtube():
     documents = loader.load_data(ytlinks=[video_url])
     transcript_text = documents[0].text
     preprocessed_transcript_text = preprocess_text(transcript_text)
-    stored_document = models.Document(title=video_url, content=preprocessed_transcript_text)
+    stored_document = models.Document(
+        title=video_url, content=preprocessed_transcript_text
+    )
     db.session.add(stored_document)
     db.session.commit()
 
@@ -58,16 +60,20 @@ def search():
     data = request.json
     query = data.get("query")
     query_embedding = embeddings_model.embed_query(query)
-    results = db.session.query(models.Document)
+    results = db.session.query(models.Embeddings)
     results = results.order_by(
-        models.Document.embedding.cosine_distance(query_embedding)
+        models.Embeddings.embedding.cosine_distance(query_embedding)
     ).limit(5)
-    return {"results": [result.content for result in results]}
+    return {"results": [result.split_content for result in results]}
 
 
 def calculate_and_store_similarity(new_document_id, new_document_text):
     with app.app_context():
-        existing_documents = db.session.query(models.Document).filter(models.Document.id != new_document_id).all()
+        existing_documents = (
+            db.session.query(models.Document)
+            .filter(models.Document.id != new_document_id)
+            .all()
+        )
 
         if existing_documents:
             existing_document_texts = [doc.content for doc in existing_documents]
@@ -78,11 +84,13 @@ def calculate_and_store_similarity(new_document_id, new_document_text):
             new_document_vector = tfidf_vectorizer.transform([new_document_text])
             similarity_scores = cosine_similarity(new_document_vector, tfidf_matrix)
 
-            for existing_doc, similarity_score in zip(existing_documents, similarity_scores[0]):
+            for existing_doc, similarity_score in zip(
+                existing_documents, similarity_scores[0]
+            ):
                 doc_similarity = models.DocSimilarity(
                     new_document_id=new_document_id,
                     existing_document_id=existing_doc.id,
-                    similarity_score=similarity_score
+                    similarity_score=similarity_score,
                 )
                 db.session.add(doc_similarity)
             db.session.commit()
@@ -90,7 +98,9 @@ def calculate_and_store_similarity(new_document_id, new_document_text):
             print("No existing documents found. Similarity calculation skipped.")
 
 
-def preprocess_text(text, use_stemming=True, use_lemmatization=True, remove_punctuation=True):
+def preprocess_text(
+    text, use_stemming=True, use_lemmatization=True, remove_punctuation=True
+):
     text = text.lower()
     tokens = word_tokenize(text)
 
@@ -115,5 +125,3 @@ def preprocess_text(text, use_stemming=True, use_lemmatization=True, remove_punc
     processed_text = " ".join(processed_tokens)
 
     return processed_text
-
-
