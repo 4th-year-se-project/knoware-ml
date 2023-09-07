@@ -9,6 +9,9 @@ import nltk
 from nltk.corpus import stopwords
 from nltk.tokenize import word_tokenize
 from nltk.stem import PorterStemmer
+from nltk.stem import WordNetLemmatizer
+import string
+import threading
 
 modelPath = "../models/all-MiniLM-L6-v2"
 model_kwargs = {"device": "cpu"}
@@ -25,11 +28,18 @@ def embed_youtube():
     video_url = data.get("video_url")
     documents = loader.load_data(ytlinks=[video_url])
     transcript_text = documents[0].text
-    #preprocessed_transcript_text = preprocess_text(transcript_text)
-    stored_document = models.Document(title=video_url, content=transcript_text)
+    preprocessed_transcript_text = preprocess_text(transcript_text)
+    stored_document = models.Document(title=video_url, content=preprocessed_transcript_text)
     db.session.add(stored_document)
     db.session.commit()
-    calculate_and_store_similarity(stored_document.id, transcript_text)
+
+    # Start a new thread to execute calculate_and_store_similarity
+    similarity_thread = threading.Thread(
+        target=calculate_and_store_similarity,
+        args=(stored_document.id, preprocessed_transcript_text),
+    )
+    similarity_thread.start()
+
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=150)
     docs = text_splitter.split_text(transcript_text)
     embeddings = embeddings_model.embed_documents(docs)
@@ -56,40 +66,53 @@ def search():
 
 
 def calculate_and_store_similarity(new_document_id, new_document_text):
-    existing_documents = db.session.query(models.Document).filter(models.Document.id != new_document_id).all()
+    with app.app_context():
+        existing_documents = db.session.query(models.Document).filter(models.Document.id != new_document_id).all()
 
-    if existing_documents:
-        existing_document_texts = [doc.content for doc in existing_documents]
+        if existing_documents:
+            existing_document_texts = [doc.content for doc in existing_documents]
 
-        tfidf_vectorizer = TfidfVectorizer()
+            tfidf_vectorizer = TfidfVectorizer()
 
-        tfidf_matrix = tfidf_vectorizer.fit_transform(existing_document_texts)
-        new_document_vector = tfidf_vectorizer.transform([new_document_text])
-        similarity_scores = cosine_similarity(new_document_vector, tfidf_matrix)
+            tfidf_matrix = tfidf_vectorizer.fit_transform(existing_document_texts)
+            new_document_vector = tfidf_vectorizer.transform([new_document_text])
+            similarity_scores = cosine_similarity(new_document_vector, tfidf_matrix)
 
-        for existing_doc, similarity_score in zip(existing_documents, similarity_scores[0]):
-            doc_similarity = models.DocSimilarity(
-                new_document_id=new_document_id,
-                existing_document_id=existing_doc.id,
-                similarity_score=similarity_score
-            )
-            db.session.add(doc_similarity)
-        db.session.commit()
-    else:
-        print("No existing documents found. Similarity calculation skipped.")
+            for existing_doc, similarity_score in zip(existing_documents, similarity_scores[0]):
+                doc_similarity = models.DocSimilarity(
+                    new_document_id=new_document_id,
+                    existing_document_id=existing_doc.id,
+                    similarity_score=similarity_score
+                )
+                db.session.add(doc_similarity)
+            db.session.commit()
+        else:
+            print("No existing documents found. Similarity calculation skipped.")
 
 
-
-def preprocess_text(text):
+def preprocess_text(text, use_stemming=True, use_lemmatization=True, remove_punctuation=True):
     text = text.lower()
     tokens = word_tokenize(text)
+
+    if remove_punctuation:
+        tokens = [token for token in tokens if token not in string.punctuation]
+
     stop_words = set(stopwords.words("english"))
     filtered_tokens = [word for word in tokens if word not in stop_words]
-    stemmer = PorterStemmer()
-    stemmed_tokens = [stemmer.stem(word) for word in filtered_tokens]
-    filtered_tokens = [word for word in stemmed_tokens if word.isalpha()]
 
-    processed_text = " ".join(filtered_tokens)
+    stemmer = PorterStemmer()
+    lemmatizer = WordNetLemmatizer()
+
+    if use_stemming:
+        processed_tokens = [stemmer.stem(word) for word in filtered_tokens]
+    elif use_lemmatization:
+        processed_tokens = [lemmatizer.lemmatize(word) for word in filtered_tokens]
+    else:
+        processed_tokens = filtered_tokens
+
+    processed_tokens = [word for word in processed_tokens if word.isalpha()]
+
+    processed_text = " ".join(processed_tokens)
 
     return processed_text
 
