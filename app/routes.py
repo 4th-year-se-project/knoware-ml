@@ -59,6 +59,7 @@ def embed_youtube():
 def search():
     data = request.json
     query = data.get("query")
+    print(query)
     query_embedding = embeddings_model.embed_query(query)
 
     # Create a dictionary to store the results, indexed by document ID
