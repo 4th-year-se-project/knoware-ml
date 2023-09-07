@@ -60,11 +60,36 @@ def search():
     data = request.json
     query = data.get("query")
     query_embedding = embeddings_model.embed_query(query)
-    results = db.session.query(models.Embeddings)
+
+    # Create a dictionary to store the results, indexed by document ID
+    results_dict = {}
+
+    # Perform a join between Embeddings and Document tables
+    results = db.session.query(models.Embeddings, models.Document)
+    results = results.join(
+        models.Document, models.Embeddings.document_id == models.Document.id
+    )
+
+    # Calculate and order by cosine distance
     results = results.order_by(
         models.Embeddings.embedding.cosine_distance(query_embedding)
-    ).limit(5)
-    return {"results": [result.split_content for result in results]}
+    )
+
+    for result in results:
+        embedding, document = result
+        doc_id = document.id
+        # Check if this document ID is already in the results_dict
+        if doc_id not in results_dict:
+            results_dict[doc_id] = {
+                "title": document.title,
+                "content": embedding.split_content,
+                "doc_id": doc_id,
+            }
+
+    # Convert the results_dict values to a list
+    response_data = list(results_dict.values())
+
+    return {"results": response_data}
 
 
 def calculate_and_store_similarity(new_document_id, new_document_text):
