@@ -47,7 +47,6 @@ def allowed_file(filename):
 @app.route("/embed_youtube", methods=["POST"])
 def embed_youtube():
     loader = YoutubeTranscriptReader()
-    print("started")
     data = request.json
     video_url = data.get("video_url")
     documents = loader.load_data(ytlinks=[video_url])
@@ -102,7 +101,18 @@ def embed_pdf():
         documents = loader.load_data(
             file=Path(filepath)
         )  # Implement the PDF loading function
-        print(documents)
+        document_text = documents[0].text
+        preprocessed_text = preprocess_text(document_text)
+        stored_document = models.Document(title=filename, content=preprocessed_text)
+        db.session.add(stored_document)
+
+        # Start a new thread to execute calculate_and_store_similarity
+        similarity_thread = threading.Thread(
+            target=calculate_and_store_similarity,
+            args=(stored_document.id, preprocessed_text),
+        )
+        similarity_thread.start()
+
         text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=1000, chunk_overlap=150
         )
@@ -112,8 +122,8 @@ def embed_pdf():
 
         # Store the embeddings in the database
         for embedding, doc in zip(embeddings, docs):
-            stored_embedding = models.Document(
-                content=doc, embedding=embedding, title=filename
+            stored_embedding = models.Embeddings(
+                split_content=doc, embedding=embedding, document_id=stored_document.id
             )
             db.session.add(stored_embedding)
         db.session.commit()
@@ -144,18 +154,29 @@ def embed_pptx():
         documents = loader.load_data(
             file=Path(filepath)
         )  # Implement the PDF loading function
-        print(documents)
         text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=1000, chunk_overlap=150
         )
-        docs = text_splitter.split_text(documents[0].text)
+        document_text = documents[0].text
+        preprocessed_text = preprocess_text(document_text)
+        stored_document = models.Document(title=filename, content=preprocessed_text)
+        db.session.add(stored_document)
+
+        # Start a new thread to execute calculate_and_store_similarity
+        similarity_thread = threading.Thread(
+            target=calculate_and_store_similarity,
+            args=(stored_document.id, preprocessed_text),
+        )
+        similarity_thread.start()
+
+        docs = text_splitter.split_text(document_text)
 
         embeddings = embeddings_model.embed_documents(docs)
 
         # Store the embeddings in the database
         for embedding, chunk in zip(embeddings, docs):
-            stored_embedding = models.Document(
-                content=chunk, embedding=embedding, title=filename
+            stored_embedding = models.Embeddings(
+                split_content=chunk, embedding=embedding, document_id=stored_document.id
             )
             db.session.add(stored_embedding)
         db.session.commit()
@@ -183,7 +204,17 @@ def embed_audio():
 
         # Load and process the audio content
         transcript = whisper_model.transcribe(filepath)
-        print(transcript)
+        preprocessed_text = preprocess_text(transcript["text"])
+        stored_document = models.Document(title=filename, content=preprocessed_text)
+        db.session.add(stored_document)
+
+        # Start a new thread to execute calculate_and_store_similarity
+        similarity_thread = threading.Thread(
+            target=calculate_and_store_similarity,
+            args=(stored_document.id, preprocessed_text),
+        )
+        similarity_thread.start()
+
         text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=1000, chunk_overlap=150
         )
@@ -193,8 +224,8 @@ def embed_audio():
 
         # Store the embeddings in the database
         for embedding, chunk in zip(embeddings, docs):
-            stored_embedding = models.Document(
-                content=chunk, embedding=embedding, title=filename
+            stored_embedding = models.Embeddings(
+                split_content=chunk, embedding=embedding, document_id=stored_document.id
             )
             db.session.add(stored_embedding)
         db.session.commit()
@@ -227,7 +258,17 @@ def embed_docx():
         documents = loader.load_data(
             file=Path(filepath)
         )  # Implement the docx loading function
-        print(documents)
+        preprocessed_text = preprocess_text(documents[0].text)
+        stored_document = models.Document(title=filename, content=preprocessed_text)
+        db.session.add(stored_document)
+
+        # Start a new thread to execute calculate_and_store_similarity
+        similarity_thread = threading.Thread(
+            target=calculate_and_store_similarity,
+            args=(stored_document.id, preprocessed_text),
+        )
+        similarity_thread.start()
+
         text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=1000, chunk_overlap=150
         )
@@ -237,8 +278,8 @@ def embed_docx():
 
         # Store the embeddings in the database
         for embedding, doc in zip(embeddings, docs):
-            stored_embedding = models.Document(
-                content=doc, embedding=embedding, title=filename
+            stored_embedding = models.Embeddings(
+                split_content=doc, embedding=embedding, document_id=stored_document.id
             )
             db.session.add(stored_embedding)
         db.session.commit()
