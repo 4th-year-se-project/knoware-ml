@@ -1,6 +1,6 @@
 from app import db
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import Integer, String, Text, ForeignKey, Float
+from sqlalchemy import ARRAY, Integer, String, Text, ForeignKey, Float
 from sqlalchemy.orm import declarative_base, mapped_column, relationship
 from sqlalchemy import create_engine
 from app.config import SQLALCHEMY_DATABASE_URI
@@ -62,15 +62,7 @@ class Document(Base):
     content = mapped_column(Text)
     subtopic_id = mapped_column(ForeignKey("subtopic.id"))
     link = mapped_column(String)
-
-
-class Keywords(Base):
-    __tablename__ = "keywords"
-
-    id = mapped_column(Integer, primary_key=True)
-    keyword = mapped_column(String)
-    document_id = mapped_column(ForeignKey("document.id"))
-    document = relationship("Document")
+    keywords = mapped_column(ARRAY(String))
 
 
 class OwnsDocument(Base):

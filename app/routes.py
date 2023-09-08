@@ -12,6 +12,8 @@ from nltk.stem import PorterStemmer
 from nltk.stem import WordNetLemmatizer
 import string
 import threading
+from keybert import KeyBERT
+from sentence_transformers import SentenceTransformer
 
 modelPath = "../models/all-MiniLM-L6-v2"
 model_kwargs = {"device": "cpu"}
@@ -20,6 +22,8 @@ embeddings_model = HuggingFaceEmbeddings(
     model_name=modelPath, model_kwargs=model_kwargs, encode_kwargs=encode_kwargs
 )
 loader = YoutubeTranscriptReader()
+sentence_model = SentenceTransformer(modelPath)
+kw_model = KeyBERT(model=sentence_model)
 
 
 @app.route("/embed_youtube", methods=["POST"])
@@ -29,7 +33,16 @@ def embed_youtube():
     documents = loader.load_data(ytlinks=[video_url])
     transcript_text = documents[0].text
     preprocessed_transcript_text = preprocess_text(transcript_text)
-    stored_document = models.Document(title=video_url, content=preprocessed_transcript_text)
+    text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=150)
+    docs = text_splitter.split_text(transcript_text)
+    embeddings = embeddings_model.embed_documents(docs)
+    keywords = get_keywords(docs)
+
+    stored_document = models.Document(
+        title=video_url,
+        content=preprocessed_transcript_text,
+        keywords=keywords,
+    )
     db.session.add(stored_document)
     db.session.commit()
 
@@ -40,12 +53,11 @@ def embed_youtube():
     )
     similarity_thread.start()
 
-    text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=150)
-    docs = text_splitter.split_text(transcript_text)
-    embeddings = embeddings_model.embed_documents(docs)
     for embedding, doc in zip(embeddings, docs):
         stored_embedding = models.Embeddings(
-            split_content=doc, embedding=embedding, document_id=stored_document.id
+            split_content=doc,
+            embedding=embedding,
+            document_id=stored_document.id,
         )
         db.session.add(stored_embedding)
     db.session.commit()
@@ -67,7 +79,11 @@ def search():
 
 def calculate_and_store_similarity(new_document_id, new_document_text):
     with app.app_context():
-        existing_documents = db.session.query(models.Document).filter(models.Document.id != new_document_id).all()
+        existing_documents = (
+            db.session.query(models.Document)
+            .filter(models.Document.id != new_document_id)
+            .all()
+        )
 
         if existing_documents:
             existing_document_texts = [doc.content for doc in existing_documents]
@@ -78,11 +94,13 @@ def calculate_and_store_similarity(new_document_id, new_document_text):
             new_document_vector = tfidf_vectorizer.transform([new_document_text])
             similarity_scores = cosine_similarity(new_document_vector, tfidf_matrix)
 
-            for existing_doc, similarity_score in zip(existing_documents, similarity_scores[0]):
+            for existing_doc, similarity_score in zip(
+                existing_documents, similarity_scores[0]
+            ):
                 doc_similarity = models.DocSimilarity(
                     new_document_id=new_document_id,
                     existing_document_id=existing_doc.id,
-                    similarity_score=similarity_score
+                    similarity_score=similarity_score,
                 )
                 db.session.add(doc_similarity)
             db.session.commit()
@@ -90,7 +108,9 @@ def calculate_and_store_similarity(new_document_id, new_document_text):
             print("No existing documents found. Similarity calculation skipped.")
 
 
-def preprocess_text(text, use_stemming=True, use_lemmatization=True, remove_punctuation=True):
+def preprocess_text(
+    text, use_stemming=True, use_lemmatization=True, remove_punctuation=True
+):
     text = text.lower()
     tokens = word_tokenize(text)
 
@@ -117,3 +137,16 @@ def preprocess_text(text, use_stemming=True, use_lemmatization=True, remove_punc
     return processed_text
 
 
+def get_keywords(docs):
+    keyword_set = set()
+
+    for doc in docs:
+        keywords = kw_model.extract_keywords(
+            doc, keyphrase_ngram_range=(1, 2), stop_words=None
+        )
+
+        for keyword, score in keywords:
+            if score > 0.64:
+                keyword_set.add(keyword)
+
+    return list(keyword_set)
