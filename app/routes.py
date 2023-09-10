@@ -105,6 +105,7 @@ def embed_pdf():
         preprocessed_text = preprocess_text(document_text)
         stored_document = models.Document(title=filename, content=preprocessed_text)
         db.session.add(stored_document)
+        db.session.commit()
 
         # Start a new thread to execute calculate_and_store_similarity
         similarity_thread = threading.Thread(
@@ -161,6 +162,7 @@ def embed_pptx():
         preprocessed_text = preprocess_text(document_text)
         stored_document = models.Document(title=filename, content=preprocessed_text)
         db.session.add(stored_document)
+        db.session.commit()
 
         # Start a new thread to execute calculate_and_store_similarity
         similarity_thread = threading.Thread(
@@ -207,6 +209,7 @@ def embed_audio():
         preprocessed_text = preprocess_text(transcript["text"])
         stored_document = models.Document(title=filename, content=preprocessed_text)
         db.session.add(stored_document)
+        db.session.commit()
 
         # Start a new thread to execute calculate_and_store_similarity
         similarity_thread = threading.Thread(
@@ -225,8 +228,7 @@ def embed_audio():
         # Store the embeddings in the database
         for embedding, chunk in zip(embeddings, docs):
             stored_embedding = models.Embeddings(
-                split_content=chunk, embedding=embedding, document_id=stored_document.id
-            )
+                split_content=chunk, embedding=embedding, document_id=stored_document.id)
             db.session.add(stored_embedding)
         db.session.commit()
 
@@ -261,6 +263,7 @@ def embed_docx():
         preprocessed_text = preprocess_text(documents[0].text)
         stored_document = models.Document(title=filename, content=preprocessed_text)
         db.session.add(stored_document)
+        db.session.commit()
 
         # Start a new thread to execute calculate_and_store_similarity
         similarity_thread = threading.Thread(
