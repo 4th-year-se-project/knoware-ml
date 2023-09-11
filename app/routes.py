@@ -357,7 +357,6 @@ def assign_topic(stored_document):
     for embedding in embeddings:
         for topic in topics:
             similarity = cosine_similarity([embedding.embedding], [topic.embedding])[0][0]
-            print(similarity)
             if similarity > best_similarity:
                 best_similarity = similarity
                 best_topic = topic.id
@@ -389,7 +388,6 @@ def calculate_and_store_similarity(new_document_id, new_document_text):
     with app.app_context():
         existing_documents = (
             db.session.query(models.Document)
-            .filter(models.Document.id != new_document_id)
             .all()
         )
 
@@ -402,6 +400,13 @@ def calculate_and_store_similarity(new_document_id, new_document_text):
             new_document_vector = tfidf_vectorizer.transform([new_document_text])
             similarity_scores = cosine_similarity(new_document_vector, tfidf_matrix)
 
+            self_similarity = models.DocSimilarity(
+                new_document_id=new_document_id,
+                existing_document_id=new_document_id,
+                similarity_score=1,
+            )
+            db.session.add(self_similarity)
+
             for existing_doc, similarity_score in zip(
                 existing_documents, similarity_scores[0]
             ):
@@ -411,6 +416,15 @@ def calculate_and_store_similarity(new_document_id, new_document_text):
                     similarity_score=similarity_score,
                 )
                 db.session.add(doc_similarity)
+
+                if new_document_id != existing_doc.id:
+                    reverse_doc_similarity = models.DocSimilarity(
+                        new_document_id=existing_doc.id,
+                        existing_document_id=new_document_id,
+                        similarity_score=similarity_score,
+                    )
+                    db.session.add(reverse_doc_similarity)
+
             db.session.commit()
         else:
             print("No existing documents found. Similarity calculation skipped.")
