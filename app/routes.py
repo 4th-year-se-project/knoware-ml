@@ -339,17 +339,24 @@ def embed_docx():
 def search():
     data = request.json
     query = data.get("query")
-    print(query)
     query_embedding = embeddings_model.embed_query(query)
 
     # Create a dictionary to store the results, indexed by document ID
     results_dict = {}
 
     # Perform a join between Embeddings and Document tables
-    results = db.session.query(models.Embeddings, models.Document)
+    # Perform a join between Embeddings, Document, Subtopic, Topic, and Course tables
+    results = db.session.query(
+        models.Embeddings, models.Document, models.SubTopic, models.Topic, models.Course
+    )
     results = results.join(
         models.Document, models.Embeddings.document_id == models.Document.id
     )
+    results = results.join(
+        models.SubTopic, models.Document.subtopic_id == models.SubTopic.id
+    )
+    results = results.join(models.Topic, models.SubTopic.topic_id == models.Topic.id)
+    results = results.join(models.Course, models.Topic.course_id == models.Course.id)
 
     # Calculate and order by cosine distance
     results = results.order_by(
@@ -357,7 +364,7 @@ def search():
     )
 
     for result in results:
-        embedding, document = result
+        embedding, document, course, topic, subtopic = result
         doc_id = document.id
         # Check if this document ID is already in the results_dict
         if doc_id not in results_dict:
@@ -365,6 +372,10 @@ def search():
                 "title": document.title,
                 "content": embedding.split_content,
                 "doc_id": doc_id,
+                "keywords": document.keywords,
+                "course": course.name,
+                "topic": topic.name,
+                "subtopic": subtopic.name,
             }
 
     # Convert the results_dict values to a list
