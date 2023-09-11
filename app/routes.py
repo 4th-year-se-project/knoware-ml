@@ -111,12 +111,13 @@ def embed_pdf():
         documents = loader.load_data(
             file=Path(filepath)
         )  # Implement the PDF loading function
-        document_text = documents[0].text
+        document_texts = [document.text for document in documents]
+        document_text = "".join(document_texts)
         preprocessed_text = preprocess_text(document_text)
         text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=1000, chunk_overlap=150
         )
-        docs = text_splitter.split_text(documents[0].text)
+        docs = text_splitter.split_text(document_text)
         embeddings = embeddings_model.embed_documents(docs)
         keywords = get_keywords(docs)
 
@@ -174,7 +175,8 @@ def embed_pptx():
         text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=1000, chunk_overlap=150
         )
-        document_text = documents[0].text
+        document_texts = [document.text for document in documents]
+        document_text = "".join(document_texts)
         preprocessed_text = preprocess_text(document_text)
         docs = text_splitter.split_text(document_text)
         embeddings = embeddings_model.embed_documents(docs)
@@ -290,11 +292,16 @@ def embed_docx():
         documents = loader.load_data(
             file=Path(filepath)
         )  # Implement the docx loading function
-        preprocessed_text = preprocess_text(documents[0].text)
+
+        document_texts = [document.text for document in documents]
+        document_text = "".join(document_texts)
+
+        preprocessed_text = preprocess_text(document_text)
         text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=1000, chunk_overlap=150
         )
-        docs = text_splitter.split_text(documents[0].text)
+
+        docs = text_splitter.split_text(document_text)
 
         embeddings = embeddings_model.embed_documents(docs)
 
