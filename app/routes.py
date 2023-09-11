@@ -74,6 +74,7 @@ def embed_youtube():
     docs = text_splitter.split_text(transcript_text)
     embeddings = embeddings_model.embed_documents(docs)
     keywords = get_keywords(docs)
+    
     for embedding, doc in zip(embeddings, docs):
         stored_embedding = models.Embeddings(
             split_content=doc,
@@ -83,6 +84,8 @@ def embed_youtube():
         )
         db.session.add(stored_embedding)
     db.session.commit()
+
+    assign_topic(stored_document)
 
     return "Embeddings saved in the database."
 
@@ -143,6 +146,8 @@ def embed_pdf():
             db.session.add(stored_embedding)
         db.session.commit()
 
+        assign_topic(stored_document)
+
         return "Embeddings saved in the database."
 
 
@@ -202,6 +207,8 @@ def embed_pptx():
             db.session.add(stored_embedding)
         db.session.commit()
 
+        assign_topic(stored_document)
+
         return "Embeddings saved in the database."
 
 
@@ -256,6 +263,8 @@ def embed_audio():
             )
             db.session.add(stored_embedding)
         db.session.commit()
+
+        assign_topic(stored_document)
 
         return "Audio embeddings saved in the database."
     else:
@@ -317,6 +326,8 @@ def embed_docx():
             db.session.add(stored_embedding)
         db.session.commit()
 
+        assign_topic(stored_document)
+
         return "Embeddings saved in the database."
 
 
@@ -357,12 +368,56 @@ def search():
 
     return {"results": response_data}
 
+def assign_topic(stored_document):
+    embeddings = (
+            db.session.query(models.Embeddings)
+            .filter(models.Embeddings.document_id == stored_document.id)
+            .all()
+    )
+    topics = (
+            db.session.query(models.Topic)
+            .all()
+    )
+     
+    best_topic = None
+    best_subtopic = None
+    best_similarity = -1  
+
+    # Iterate through document chunks and calculate similarities with the topics
+    for embedding in embeddings:
+        for topic in topics:
+            similarity = cosine_similarity([embedding.embedding], [topic.embedding])[0][0]
+            if similarity > best_similarity:
+                best_similarity = similarity
+                best_topic = topic.id
+
+    best_similarity = -1
+    
+    subtopics = (
+                db.session.query(models.SubTopic)
+                .filter(models.SubTopic.topic_id == best_topic)
+                .all()
+    )
+
+    # Iterate through document chunks and calculate similarities with the subtopics
+    for embedding in embeddings:
+        for subtopic in subtopics:
+            similarity = cosine_similarity([embedding.embedding], [subtopic.embedding])[0][0]
+            if similarity > best_similarity:
+                best_similarity = similarity
+                best_subtopic = subtopic.id
+
+    # Assign best matching subtopic to the document
+    if best_subtopic is not None:
+        stored_document.subtopic_id = best_subtopic 
+        db.session.commit()
+
+
 
 def calculate_and_store_similarity(new_document_id, new_document_text):
     with app.app_context():
         existing_documents = (
             db.session.query(models.Document)
-            .filter(models.Document.id != new_document_id)
             .all()
         )
 
@@ -375,6 +430,13 @@ def calculate_and_store_similarity(new_document_id, new_document_text):
             new_document_vector = tfidf_vectorizer.transform([new_document_text])
             similarity_scores = cosine_similarity(new_document_vector, tfidf_matrix)
 
+            self_similarity = models.DocSimilarity(
+                new_document_id=new_document_id,
+                existing_document_id=new_document_id,
+                similarity_score=1,
+            )
+            db.session.add(self_similarity)
+
             for existing_doc, similarity_score in zip(
                 existing_documents, similarity_scores[0]
             ):
@@ -384,6 +446,15 @@ def calculate_and_store_similarity(new_document_id, new_document_text):
                     similarity_score=similarity_score,
                 )
                 db.session.add(doc_similarity)
+
+                if new_document_id != existing_doc.id:
+                    reverse_doc_similarity = models.DocSimilarity(
+                        new_document_id=existing_doc.id,
+                        existing_document_id=new_document_id,
+                        similarity_score=similarity_score,
+                    )
+                    db.session.add(reverse_doc_similarity)
+
             db.session.commit()
         else:
             print("No existing documents found. Similarity calculation skipped.")
