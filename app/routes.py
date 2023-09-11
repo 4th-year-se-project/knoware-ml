@@ -18,6 +18,8 @@ from nltk.stem import PorterStemmer
 from nltk.stem import WordNetLemmatizer
 import string
 import threading
+from keybert import KeyBERT
+from sentence_transformers import SentenceTransformer
 
 modelPath = "../models/all-MiniLM-L6-v2"
 model_kwargs = {"device": "cpu"}
@@ -30,6 +32,9 @@ PDFReader = download_loader("PDFReader")
 PptxReader = download_loader("PptxReader")
 DocxReader = download_loader("DocxReader")
 whisper_model = whisper.load_model("small", download_root="../models/whisper")
+
+sentence_model = SentenceTransformer(modelPath)
+kw_model = KeyBERT(model=sentence_model)
 
 
 # Configure the upload folder
@@ -68,10 +73,14 @@ def embed_youtube():
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=150)
     docs = text_splitter.split_text(transcript_text)
     embeddings = embeddings_model.embed_documents(docs)
+    keywords = get_keywords(docs)
     
     for embedding, doc in zip(embeddings, docs):
         stored_embedding = models.Embeddings(
-            split_content=doc, embedding=embedding, document_id=stored_document.id
+            split_content=doc,
+            embedding=embedding,
+            document_id=stored_document.id,
+            keywords=keywords,
         )
         db.session.add(stored_embedding)
     db.session.commit()
@@ -124,10 +133,15 @@ def embed_pdf():
 
         embeddings = embeddings_model.embed_documents(docs)
 
+        keywords = get_keywords(docs)
+
         # Store the embeddings in the database
         for embedding, doc in zip(embeddings, docs):
             stored_embedding = models.Embeddings(
-                split_content=doc, embedding=embedding, document_id=stored_document.id
+                split_content=doc,
+                embedding=embedding,
+                document_id=stored_document.id,
+                keywords=keywords,
             )
             db.session.add(stored_embedding)
         db.session.commit()
@@ -180,10 +194,15 @@ def embed_pptx():
 
         embeddings = embeddings_model.embed_documents(docs)
 
+        keywords = get_keywords(docs)
+
         # Store the embeddings in the database
         for embedding, chunk in zip(embeddings, docs):
             stored_embedding = models.Embeddings(
-                split_content=chunk, embedding=embedding, document_id=stored_document.id
+                split_content=chunk,
+                embedding=embedding,
+                document_id=stored_document.id,
+                keywords=keywords,
             )
             db.session.add(stored_embedding)
         db.session.commit()
@@ -232,10 +251,16 @@ def embed_audio():
 
         embeddings = embeddings_model.embed_documents(docs)
 
+        keywords = get_keywords(docs)
+
         # Store the embeddings in the database
         for embedding, chunk in zip(embeddings, docs):
             stored_embedding = models.Embeddings(
-                split_content=chunk, embedding=embedding, document_id=stored_document.id)
+                split_content=chunk,
+                embedding=embedding,
+                document_id=stored_document.id,
+                keywords=keywords,
+            )
             db.session.add(stored_embedding)
         db.session.commit()
 
@@ -288,10 +313,15 @@ def embed_docx():
 
         embeddings = embeddings_model.embed_documents(docs)
 
+        keywords = get_keywords(docs)
+
         # Store the embeddings in the database
         for embedding, doc in zip(embeddings, docs):
             stored_embedding = models.Embeddings(
-                split_content=doc, embedding=embedding, document_id=stored_document.id
+                split_content=doc,
+                embedding=embedding,
+                document_id=stored_document.id,
+                keywords=keywords,
             )
             db.session.add(stored_embedding)
         db.session.commit()
@@ -457,3 +487,18 @@ def preprocess_text(
     processed_text = " ".join(processed_tokens)
 
     return processed_text
+
+
+def get_keywords(docs):
+    keyword_set = set()
+
+    for doc in docs:
+        keywords = kw_model.extract_keywords(
+            doc, keyphrase_ngram_range=(1, 2), stop_words=None
+        )
+
+        for keyword, score in keywords:
+            if score > 0.64:
+                keyword_set.add(keyword)
+
+    return list(keyword_set)
