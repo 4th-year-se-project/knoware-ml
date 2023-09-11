@@ -498,7 +498,6 @@ def get_keywords(docs):
         keywords = kw_model.extract_keywords(
             doc, keyphrase_ngram_range=(1, 2), stop_words=None
         )
-        print(keywords)
 
         for keyword, score in keywords:
             if score > 0.64:
