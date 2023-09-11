@@ -57,8 +57,12 @@ def embed_youtube():
     documents = loader.load_data(ytlinks=[video_url])
     transcript_text = documents[0].text
     preprocessed_transcript_text = preprocess_text(transcript_text)
+    text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=150)
+    docs = text_splitter.split_text(transcript_text)
+    embeddings = embeddings_model.embed_documents(docs)
+    keywords = get_keywords(docs)
     stored_document = models.Document(
-        title=video_url, content=preprocessed_transcript_text
+        title=video_url, content=preprocessed_transcript_text, keywords=keywords
     )
     db.session.add(stored_document)
     db.session.commit()
@@ -70,17 +74,11 @@ def embed_youtube():
     )
     similarity_thread.start()
 
-    text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=150)
-    docs = text_splitter.split_text(transcript_text)
-    embeddings = embeddings_model.embed_documents(docs)
-    keywords = get_keywords(docs)
-    
     for embedding, doc in zip(embeddings, docs):
         stored_embedding = models.Embeddings(
             split_content=doc,
             embedding=embedding,
             document_id=stored_document.id,
-            keywords=keywords,
         )
         db.session.add(stored_embedding)
     db.session.commit()
@@ -113,9 +111,19 @@ def embed_pdf():
         documents = loader.load_data(
             file=Path(filepath)
         )  # Implement the PDF loading function
-        document_text = documents[0].text
+        document_texts = [document.text for document in documents]
+        document_text = "".join(document_texts)
         preprocessed_text = preprocess_text(document_text)
-        stored_document = models.Document(title=filename, content=preprocessed_text)
+        text_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=1000, chunk_overlap=150
+        )
+        docs = text_splitter.split_text(document_text)
+        embeddings = embeddings_model.embed_documents(docs)
+        keywords = get_keywords(docs)
+
+        stored_document = models.Document(
+            title=filename, content=preprocessed_text, keywords=keywords
+        )
         db.session.add(stored_document)
         db.session.commit()
 
@@ -126,22 +134,12 @@ def embed_pdf():
         )
         similarity_thread.start()
 
-        text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=1000, chunk_overlap=150
-        )
-        docs = text_splitter.split_text(documents[0].text)
-
-        embeddings = embeddings_model.embed_documents(docs)
-
-        keywords = get_keywords(docs)
-
         # Store the embeddings in the database
         for embedding, doc in zip(embeddings, docs):
             stored_embedding = models.Embeddings(
                 split_content=doc,
                 embedding=embedding,
                 document_id=stored_document.id,
-                keywords=keywords,
             )
             db.session.add(stored_embedding)
         db.session.commit()
@@ -177,9 +175,16 @@ def embed_pptx():
         text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=1000, chunk_overlap=150
         )
-        document_text = documents[0].text
+        document_texts = [document.text for document in documents]
+        document_text = "".join(document_texts)
         preprocessed_text = preprocess_text(document_text)
-        stored_document = models.Document(title=filename, content=preprocessed_text)
+        docs = text_splitter.split_text(document_text)
+        embeddings = embeddings_model.embed_documents(docs)
+        keywords = get_keywords(docs)
+
+        stored_document = models.Document(
+            title=filename, content=preprocessed_text, keywords=keywords
+        )
         db.session.add(stored_document)
         db.session.commit()
 
@@ -190,19 +195,12 @@ def embed_pptx():
         )
         similarity_thread.start()
 
-        docs = text_splitter.split_text(document_text)
-
-        embeddings = embeddings_model.embed_documents(docs)
-
-        keywords = get_keywords(docs)
-
         # Store the embeddings in the database
         for embedding, chunk in zip(embeddings, docs):
             stored_embedding = models.Embeddings(
                 split_content=chunk,
                 embedding=embedding,
                 document_id=stored_document.id,
-                keywords=keywords,
             )
             db.session.add(stored_embedding)
         db.session.commit()
@@ -233,7 +231,17 @@ def embed_audio():
         # Load and process the audio content
         transcript = whisper_model.transcribe(filepath)
         preprocessed_text = preprocess_text(transcript["text"])
-        stored_document = models.Document(title=filename, content=preprocessed_text)
+        text_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=1000, chunk_overlap=150
+        )
+        docs = text_splitter.split_text(transcript["text"])
+
+        embeddings = embeddings_model.embed_documents(docs)
+
+        keywords = get_keywords(docs)
+        stored_document = models.Document(
+            title=filename, content=preprocessed_text, keywords=keywords
+        )
         db.session.add(stored_document)
         db.session.commit()
 
@@ -244,22 +252,12 @@ def embed_audio():
         )
         similarity_thread.start()
 
-        text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=1000, chunk_overlap=150
-        )
-        docs = text_splitter.split_text(transcript["text"])
-
-        embeddings = embeddings_model.embed_documents(docs)
-
-        keywords = get_keywords(docs)
-
         # Store the embeddings in the database
         for embedding, chunk in zip(embeddings, docs):
             stored_embedding = models.Embeddings(
                 split_content=chunk,
                 embedding=embedding,
                 document_id=stored_document.id,
-                keywords=keywords,
             )
             db.session.add(stored_embedding)
         db.session.commit()
@@ -294,8 +292,24 @@ def embed_docx():
         documents = loader.load_data(
             file=Path(filepath)
         )  # Implement the docx loading function
-        preprocessed_text = preprocess_text(documents[0].text)
-        stored_document = models.Document(title=filename, content=preprocessed_text)
+
+        document_texts = [document.text for document in documents]
+        document_text = "".join(document_texts)
+
+        preprocessed_text = preprocess_text(document_text)
+        text_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=1000, chunk_overlap=150
+        )
+
+        docs = text_splitter.split_text(document_text)
+
+        embeddings = embeddings_model.embed_documents(docs)
+
+        keywords = get_keywords(docs)
+
+        stored_document = models.Document(
+            title=filename, content=preprocessed_text, keywords=keywords
+        )
         db.session.add(stored_document)
         db.session.commit()
 
@@ -306,22 +320,12 @@ def embed_docx():
         )
         similarity_thread.start()
 
-        text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=1000, chunk_overlap=150
-        )
-        docs = text_splitter.split_text(documents[0].text)
-
-        embeddings = embeddings_model.embed_documents(docs)
-
-        keywords = get_keywords(docs)
-
         # Store the embeddings in the database
         for embedding, doc in zip(embeddings, docs):
             stored_embedding = models.Embeddings(
                 split_content=doc,
                 embedding=embedding,
                 document_id=stored_document.id,
-                keywords=keywords,
             )
             db.session.add(stored_embedding)
         db.session.commit()
@@ -335,17 +339,24 @@ def embed_docx():
 def search():
     data = request.json
     query = data.get("query")
-    print(query)
     query_embedding = embeddings_model.embed_query(query)
 
     # Create a dictionary to store the results, indexed by document ID
     results_dict = {}
 
     # Perform a join between Embeddings and Document tables
-    results = db.session.query(models.Embeddings, models.Document)
+    # Perform a join between Embeddings, Document, Subtopic, Topic, and Course tables
+    results = db.session.query(
+        models.Embeddings, models.Document, models.SubTopic, models.Topic, models.Course
+    )
     results = results.join(
         models.Document, models.Embeddings.document_id == models.Document.id
     )
+    results = results.join(
+        models.SubTopic, models.Document.subtopic_id == models.SubTopic.id
+    )
+    results = results.join(models.Topic, models.SubTopic.topic_id == models.Topic.id)
+    results = results.join(models.Course, models.Topic.course_id == models.Course.id)
 
     # Calculate and order by cosine distance
     results = results.order_by(
@@ -353,7 +364,7 @@ def search():
     )
 
     for result in results:
-        embedding, document = result
+        embedding, document, course, topic, subtopic = result
         doc_id = document.id
         # Check if this document ID is already in the results_dict
         if doc_id not in results_dict:
@@ -361,6 +372,10 @@ def search():
                 "title": document.title,
                 "content": embedding.split_content,
                 "doc_id": doc_id,
+                "keywords": document.keywords,
+                "course": course.name,
+                "topic": topic.name,
+                "subtopic": subtopic.name,
             }
 
     # Convert the results_dict values to a list
@@ -368,58 +383,56 @@ def search():
 
     return {"results": response_data}
 
+
 def assign_topic(stored_document):
     embeddings = (
-            db.session.query(models.Embeddings)
-            .filter(models.Embeddings.document_id == stored_document.id)
-            .all()
+        db.session.query(models.Embeddings)
+        .filter(models.Embeddings.document_id == stored_document.id)
+        .all()
     )
-    topics = (
-            db.session.query(models.Topic)
-            .all()
-    )
-     
+    topics = db.session.query(models.Topic).all()
+
     best_topic = None
     best_subtopic = None
-    best_similarity = -1  
+    best_similarity = -1
 
     # Iterate through document chunks and calculate similarities with the topics
     for embedding in embeddings:
         for topic in topics:
-            similarity = cosine_similarity([embedding.embedding], [topic.embedding])[0][0]
+            similarity = cosine_similarity([embedding.embedding], [topic.embedding])[0][
+                0
+            ]
             if similarity > best_similarity:
                 best_similarity = similarity
                 best_topic = topic.id
 
     best_similarity = -1
-    
+
     subtopics = (
-                db.session.query(models.SubTopic)
-                .filter(models.SubTopic.topic_id == best_topic)
-                .all()
+        db.session.query(models.SubTopic)
+        .filter(models.SubTopic.topic_id == best_topic)
+        .all()
     )
 
     # Iterate through document chunks and calculate similarities with the subtopics
     for embedding in embeddings:
         for subtopic in subtopics:
-            similarity = cosine_similarity([embedding.embedding], [subtopic.embedding])[0][0]
+            similarity = cosine_similarity([embedding.embedding], [subtopic.embedding])[
+                0
+            ][0]
             if similarity > best_similarity:
                 best_similarity = similarity
                 best_subtopic = subtopic.id
 
     # Assign best matching subtopic to the document
     if best_subtopic is not None:
-        stored_document.subtopic_id = best_subtopic 
+        stored_document.subtopic_id = best_subtopic
         db.session.commit()
-
 
 
 def calculate_and_store_similarity(new_document_id, new_document_text):
     with app.app_context():
-        existing_documents = (
-            db.session.query(models.Document)
-            .all()
-        )
+        existing_documents = db.session.query(models.Document).all()
 
         if existing_documents:
             existing_document_texts = [doc.content for doc in existing_documents]
