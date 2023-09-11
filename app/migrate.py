@@ -2,12 +2,20 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from app import db
 from app.models import User, Course, Topic, SubTopic
+from langchain.embeddings import HuggingFaceEmbeddings
 from app.config import SQLALCHEMY_DATABASE_URI
 from data import course_data  # Import the data module
 
 engine = create_engine(SQLALCHEMY_DATABASE_URI)
 Session = sessionmaker(bind=engine)
 session = Session()
+
+modelPath = "../models/all-MiniLM-L6-v2"
+model_kwargs = {"device": "cpu"}
+encode_kwargs = {"normalize_embeddings": False}
+embeddings_model = HuggingFaceEmbeddings(
+    model_name=modelPath, model_kwargs=model_kwargs, encode_kwargs=encode_kwargs
+)
 
 try:
     # Clear all data from the tables
@@ -35,6 +43,12 @@ try:
             session.add(topic)
             session.add_all(subtopics)
 
+            topic_embedding = embeddings_model.embed_query(topic.name)
+            topic.embedding = topic_embedding
+
+            for subtopic in subtopics:
+                subtopic_embedding = embeddings_model.embed_query(topic.name)
+                subtopic.embedding = subtopic_embedding
     session.commit()
 
 except Exception as e:

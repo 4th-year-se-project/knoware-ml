@@ -42,6 +42,7 @@ class Topic(Base):
     id = mapped_column(Integer, primary_key=True)
     name = mapped_column(String)
     course_id = mapped_column(ForeignKey("course.id"))
+    embedding = mapped_column(Vector(384))
     children = relationship("SubTopic")
 
 
@@ -51,6 +52,7 @@ class SubTopic(Base):
     id = mapped_column(Integer, primary_key=True)
     name = mapped_column(String)
     topic_id = mapped_column(ForeignKey("topic.id"))
+    embedding = mapped_column(Vector(384))
     children = relationship("Document")
 
 

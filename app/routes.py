@@ -68,12 +68,15 @@ def embed_youtube():
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=150)
     docs = text_splitter.split_text(transcript_text)
     embeddings = embeddings_model.embed_documents(docs)
+    
     for embedding, doc in zip(embeddings, docs):
         stored_embedding = models.Embeddings(
             split_content=doc, embedding=embedding, document_id=stored_document.id
         )
         db.session.add(stored_embedding)
     db.session.commit()
+
+    assign_topic(stored_document)
 
     return "Embeddings saved in the database."
 
@@ -129,6 +132,8 @@ def embed_pdf():
             db.session.add(stored_embedding)
         db.session.commit()
 
+        assign_topic(stored_document)
+
         return "Embeddings saved in the database."
 
 
@@ -183,6 +188,8 @@ def embed_pptx():
             db.session.add(stored_embedding)
         db.session.commit()
 
+        assign_topic(stored_document)
+
         return "Embeddings saved in the database."
 
 
@@ -231,6 +238,8 @@ def embed_audio():
                 split_content=chunk, embedding=embedding, document_id=stored_document.id)
             db.session.add(stored_embedding)
         db.session.commit()
+
+        assign_topic(stored_document)
 
         return "Audio embeddings saved in the database."
     else:
@@ -287,6 +296,8 @@ def embed_docx():
             db.session.add(stored_embedding)
         db.session.commit()
 
+        assign_topic(stored_document)
+
         return "Embeddings saved in the database."
 
 
@@ -326,6 +337,52 @@ def search():
     response_data = list(results_dict.values())
 
     return {"results": response_data}
+
+def assign_topic(stored_document):
+    embeddings = (
+            db.session.query(models.Embeddings)
+            .filter(models.Embeddings.document_id == stored_document.id)
+            .all()
+    )
+    topics = (
+            db.session.query(models.Topic)
+            .all()
+    )
+     
+    best_topic = None
+    best_subtopic = None
+    best_similarity = -1  
+
+    # Iterate through document chunks and calculate similarities with the topics
+    for embedding in embeddings:
+        for topic in topics:
+            similarity = cosine_similarity([embedding.embedding], [topic.embedding])[0][0]
+            print(similarity)
+            if similarity > best_similarity:
+                best_similarity = similarity
+                best_topic = topic.id
+
+    best_similarity = -1
+    
+    subtopics = (
+                db.session.query(models.SubTopic)
+                .filter(models.SubTopic.topic_id == best_topic)
+                .all()
+    )
+
+    # Iterate through document chunks and calculate similarities with the subtopics
+    for embedding in embeddings:
+        for subtopic in subtopics:
+            similarity = cosine_similarity([embedding.embedding], [subtopic.embedding])[0][0]
+            if similarity > best_similarity:
+                best_similarity = similarity
+                best_subtopic = subtopic.id
+
+    # Assign best matching subtopic to the document
+    if best_subtopic is not None:
+        stored_document.subtopic_id = best_subtopic 
+        db.session.commit()
+
 
 
 def calculate_and_store_similarity(new_document_id, new_document_text):
