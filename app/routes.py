@@ -436,11 +436,24 @@ def get_course():
                 .all()
             )
 
-            for document in documents:
+            for doc in documents:
+                # Retrieve the similarity score from the 'doc_similarity' table
+                similarity_entry = (
+                    db.session.query(models.DocSimilarity)
+                    .filter(
+                        (models.DocSimilarity.new_document_id == document_id)
+                        & (models.DocSimilarity.existing_document_id == doc.id)
+                    )
+                    .first()
+                )
+                similarity_score = similarity_entry.similarity_score if similarity_entry else None
+
                 document_data = {
-                    "document_name": document.title,
-                    "document_id": document.id,
+                    "document_name": doc.title,
+                    "document_id": doc.id,
+                    "similarity_score": similarity_score,
                 }
+                
                 subtopic_data["documents"].append(document_data)
 
             topic_data["subtopics"].append(subtopic_data)
