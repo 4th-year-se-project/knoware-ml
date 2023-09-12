@@ -1,6 +1,6 @@
 import os
 from app import app, db, models
-from flask import request
+from flask import jsonify, request
 from llama_hub.youtube_transcript import YoutubeTranscriptReader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.embeddings import HuggingFaceEmbeddings
@@ -382,6 +382,72 @@ def search():
     response_data = list(results_dict.values())
 
     return {"results": response_data}
+
+
+@app.route("/course", methods=["GET"])
+def get_course():
+    document_id = request.args.get("document_id")
+
+    # Find the document with the given document_id
+    document = (
+        db.session.query(models.Document)
+        .filter(models.Document.id == document_id)
+        .first()
+    )
+
+    if not document:
+        return jsonify({"error": "Document not found"}), 404
+
+    # Get the course associated with the document
+    course = (
+        db.session.query(models.Course)
+        .filter(models.Course.id == document.subtopic.topic.course_id)
+        .first()
+    )
+
+    if not course:
+        return jsonify({"error": "Course not found for the given document"}), 404
+
+    # Construct the course data
+    course_data = {
+        "course_name": course.name,
+        "topics": [],
+    }
+
+    topics = (
+        db.session.query(models.Topic).filter(models.Topic.course_id == course.id).all()
+    )
+
+    for topic in topics:
+        topic_data = {"topic_name": topic.name, "subtopics": []}
+
+        subtopics = (
+            db.session.query(models.SubTopic)
+            .filter(models.SubTopic.topic_id == topic.id)
+            .all()
+        )
+
+        for subtopic in subtopics:
+            subtopic_data = {"subtopic_name": subtopic.name, "documents": []}
+
+            documents = (
+                db.session.query(models.Document)
+                .filter(models.Document.subtopic_id == subtopic.id)
+                .all()
+            )
+
+            for document in documents:
+                document_data = {
+                    "document_name": document.title,
+                    "document_id": document.id,
+                }
+                subtopic_data["documents"].append(document_data)
+
+            topic_data["subtopics"].append(subtopic_data)
+
+        course_data["topics"].append(topic_data)
+
+    return jsonify(course_data)
 
 
 def assign_topic(stored_document):
