@@ -399,6 +399,24 @@ def get_resource_info():
     if not document:
         return jsonify({"error": "Document not found"}), 404
 
+    sub_topic = (
+        db.session.query(models.SubTopic)
+        .filter(models.SubTopic.id == document.subtopic_id)
+        .first()
+    )
+
+    topic = (
+        db.session.query(models.Topic)
+        .filter(models.Topic.id == sub_topic.topic_id)
+        .first()
+    )
+
+    course = (
+        db.session.query(models.Course)
+        .filter(models.Course.id == topic.course_id)
+        .first()
+    )
+
     embeddings = (
         db.session.query(models.Embeddings)
         .filter(models.Embeddings.document_id == document_id)
@@ -416,11 +434,11 @@ def get_resource_info():
 
     return jsonify({
         "title": document.title,
-        "content": document.content,
         "subtopic_id": document.subtopic_id,
         "link": document.link,
         "keywords": document.keywords,
-        "content": best_embedding
+        "content": best_embedding,
+        "topics": [course.name, topic.name, sub_topic.name]
     }), 200
 
 
