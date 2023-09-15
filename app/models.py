@@ -65,6 +65,7 @@ class Document(Base):
     subtopic_id = mapped_column(ForeignKey("subtopic.id"))
     link = mapped_column(String)
     keywords = mapped_column(ARRAY(String))
+    ratings = mapped_column(Float, default=-1)
 
 
 class OwnsDocument(Base):
