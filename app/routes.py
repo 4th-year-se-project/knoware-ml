@@ -8,7 +8,6 @@ from werkzeug.utils import secure_filename
 from llama_index import download_loader
 from pathlib import Path
 import whisper
-
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 import nltk
@@ -20,6 +19,7 @@ import string
 import threading
 from keybert import KeyBERT
 from sentence_transformers import SentenceTransformer
+from pytube import YouTube
 
 modelPath = "../models/all-MiniLM-L6-v2"
 model_kwargs = {"device": "cpu"}
@@ -53,7 +53,11 @@ def allowed_file(filename):
 def embed_youtube():
     loader = YoutubeTranscriptReader()
     data = request.json
+
     video_url = data.get("video_url")
+    yt = YouTube(video_url)
+    title = yt.title
+
     documents = loader.load_data(ytlinks=[video_url])
     transcript_text = documents[0].text
     preprocessed_transcript_text = preprocess_text(transcript_text)
@@ -62,7 +66,7 @@ def embed_youtube():
     embeddings = embeddings_model.embed_documents(docs)
     keywords = get_keywords(docs)
     stored_document = models.Document(
-        title=video_url, content=preprocessed_transcript_text, keywords=keywords
+        title=title, content=preprocessed_transcript_text, keywords=keywords
     )
     db.session.add(stored_document)
     db.session.commit()
