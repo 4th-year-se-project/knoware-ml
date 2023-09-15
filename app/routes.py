@@ -384,6 +384,39 @@ def search():
     return {"results": response_data}
 
 
+@app.route("/recommend", methods=["POST"])
+def search_similar_resource():
+    data = request.json
+    doc_id = data.get("document_id")
+
+    response_dict = {}
+
+    doc_results = db.session.query(
+        models.DocSimilarity
+        ).filter(
+        models.DocSimilarity.new_document_id == doc_id, 
+        models.DocSimilarity.existing_document_id != models.DocSimilarity.new_document_id
+        ).order_by(
+            models.DocSimilarity.similarity_score.desc()
+            ).slice(0, 5).all()
+
+    x=0
+    for result in doc_results:
+        user_count = (db.session.query(models.OwnsDocument).filter(models.OwnsDocument.document_id == result.existing_document_id).count())
+        response_dict[x] = {
+            "exsisting_id": result.existing_document_id,
+            "new_doc_id": result.new_document_id,
+            "similarity_score": result.similarity_score,
+            "user_count": user_count,
+            "similarity_weight": user_count * result.similarity_score
+        }
+        x=x+1
+
+    response_data = sorted(response_dict.values(), key=lambda x: x["similarity_weight"], reverse=True)
+
+    return {"results": response_data}
+
+
 def assign_topic(stored_document):
     embeddings = (
         db.session.query(models.Embeddings)
