@@ -403,14 +403,16 @@ def search_similar_resource():
     x=0
     for result in doc_results:
         user_count = (db.session.query(models.OwnsDocument).filter(models.OwnsDocument.document_id == result.existing_document_id).count())
-        lecturer_rating = (db.session.query(models.Document.ratings).filter(models.Document.id == doc_id).scalar())
+        all_users = (db.session.query(models.User.id).count())
+        recommending_doc_ratings = (db.session.query( models.Document.ratings).filter(models.Document.id == result.existing_document_id).scalar())
+        recommending_doc_title = (db.session.query(models.Document.title).filter(models.Document.id == result.existing_document_id).scalar())
         response_dict[x] = {
-            "exsisting_id": result.existing_document_id,
-            "new_doc_id": result.new_document_id,
+            "document_id": result.existing_document_id,
+            "document_title": recommending_doc_title,
+            "ratings": recommending_doc_ratings,
             "similarity_score": result.similarity_score,
             "user_count": user_count,
-            "similarity_weight": user_count * result.similarity_score,
-            "ratings": lecturer_rating
+            "similarity_weight": (user_count / all_users) * result.similarity_score * (recommending_doc_ratings / 5)         
         }
         x=x+1
 
