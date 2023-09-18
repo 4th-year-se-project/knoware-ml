@@ -1,6 +1,6 @@
 import os
 from app import app, db, models
-from flask import request
+from flask import jsonify, request
 from llama_hub.youtube_transcript import YoutubeTranscriptReader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.embeddings import HuggingFaceEmbeddings
@@ -8,7 +8,6 @@ from werkzeug.utils import secure_filename
 from llama_index import download_loader
 from pathlib import Path
 import whisper
-
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 import nltk
@@ -20,6 +19,7 @@ import string
 import threading
 from keybert import KeyBERT
 from sentence_transformers import SentenceTransformer
+from pytube import YouTube
 
 modelPath = "../models/all-MiniLM-L6-v2"
 model_kwargs = {"device": "cpu"}
@@ -53,7 +53,11 @@ def allowed_file(filename):
 def embed_youtube():
     loader = YoutubeTranscriptReader()
     data = request.json
+
     video_url = data.get("video_url")
+    yt = YouTube(video_url)
+    title = yt.title
+
     documents = loader.load_data(ytlinks=[video_url])
     transcript_text = documents[0].text
     preprocessed_transcript_text = preprocess_text(transcript_text)
@@ -62,7 +66,7 @@ def embed_youtube():
     embeddings = embeddings_model.embed_documents(docs)
     keywords = get_keywords(docs)
     stored_document = models.Document(
-        title=video_url, content=preprocessed_transcript_text, keywords=keywords
+        title=title, content=preprocessed_transcript_text, keywords=keywords
     )
     db.session.add(stored_document)
     db.session.commit()
@@ -419,6 +423,142 @@ def search_similar_resource():
     response_data = sorted(response_dict.values(), key=lambda x: x["similarity_weight"], reverse=True)
 
     return {"results": response_data}
+
+@app.route("/resource-info", methods=["GET"])
+def get_resource_info():
+    document_id = request.args.get("document_id")
+    query = request.args.get("query")
+    query_embedding = embeddings_model.embed_query(query)
+
+    document = (
+        db.session.query(models.Document)
+        .filter(models.Document.id == document_id)
+        .first()
+    )
+
+    if not document:
+        return jsonify({"error": "Document not found"}), 404
+
+    sub_topic = (
+        db.session.query(models.SubTopic)
+        .filter(models.SubTopic.id == document.subtopic_id)
+        .first()
+    )
+
+    topic = (
+        db.session.query(models.Topic)
+        .filter(models.Topic.id == sub_topic.topic_id)
+        .first()
+    )
+
+    course = (
+        db.session.query(models.Course)
+        .filter(models.Course.id == topic.course_id)
+        .first()
+    )
+
+    embeddings = (
+        db.session.query(models.Embeddings)
+        .filter(models.Embeddings.document_id == document_id)
+        .all()
+    )
+
+    best_embedding = ""
+    best_similarity = -1
+
+    for embedding in embeddings:
+        similarity = cosine_similarity([embedding.embedding], [query_embedding])[0][0]
+        if similarity > best_similarity:
+            best_similarity = similarity
+            best_embedding = embedding.split_content
+
+    return jsonify({
+        "title": document.title,
+        "subtopic_id": document.subtopic_id,
+        "link": document.link,
+        "keywords": document.keywords,
+        "content": best_embedding,
+        "topics": [course.name, topic.name, sub_topic.name]
+    }), 200
+
+
+@app.route("/course", methods=["GET"])
+def get_course():
+    document_id = request.args.get("document_id")
+
+    # Find the document with the given document_id
+    document = (
+        db.session.query(models.Document)
+        .filter(models.Document.id == document_id)
+        .first()
+    )
+
+    if not document:
+        return jsonify({"error": "Document not found"}), 404
+
+    # Get the course associated with the document
+    course = (
+        db.session.query(models.Course)
+        .filter(models.Course.id == document.subtopic.topic.course_id)
+        .first()
+    )
+
+    if not course:
+        return jsonify({"error": "Course not found for the given document"}), 404
+
+    # Construct the course data
+    course_data = {
+        "course_name": course.name,
+        "topics": [],
+    }
+
+    topics = (
+        db.session.query(models.Topic).filter(models.Topic.course_id == course.id).all()
+    )
+
+    for topic in topics:
+        topic_data = {"topic_name": topic.name, "subtopics": []}
+
+        subtopics = (
+            db.session.query(models.SubTopic)
+            .filter(models.SubTopic.topic_id == topic.id)
+            .all()
+        )
+
+        for subtopic in subtopics:
+            subtopic_data = {"subtopic_name": subtopic.name, "documents": []}
+
+            documents = (
+                db.session.query(models.Document)
+                .filter(models.Document.subtopic_id == subtopic.id)
+                .all()
+            )
+
+            for doc in documents:
+                # Retrieve the similarity score from the 'doc_similarity' table
+                similarity_entry = (
+                    db.session.query(models.DocSimilarity)
+                    .filter(
+                        (models.DocSimilarity.new_document_id == document_id)
+                        & (models.DocSimilarity.existing_document_id == doc.id)
+                    )
+                    .first()
+                )
+                similarity_score = similarity_entry.similarity_score if similarity_entry else None
+
+                document_data = {
+                    "document_name": doc.title,
+                    "document_id": doc.id,
+                    "similarity_score": similarity_score,
+                }
+                
+                subtopic_data["documents"].append(document_data)
+
+            topic_data["subtopics"].append(subtopic_data)
+
+        course_data["topics"].append(topic_data)
+
+    return jsonify(course_data)
 
 
 def assign_topic(stored_document):

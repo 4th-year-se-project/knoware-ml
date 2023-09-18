@@ -23,7 +23,7 @@ class Course(Base):
     id = mapped_column(Integer, primary_key=True)
     name = mapped_column(String)
     code = mapped_column(String)
-    children = relationship("Topic")
+    children = relationship("Topic", back_populates="course")
 
 
 class RegisteredTo(Base):
@@ -43,6 +43,7 @@ class Topic(Base):
     name = mapped_column(String)
     course_id = mapped_column(ForeignKey("course.id"))
     embedding = mapped_column(Vector(384))
+    course = relationship("Course", back_populates="children")
     children = relationship("SubTopic")
 
 
@@ -53,7 +54,8 @@ class SubTopic(Base):
     name = mapped_column(String)
     topic_id = mapped_column(ForeignKey("topic.id"))
     embedding = mapped_column(Vector(384))
-    children = relationship("Document")
+    topic = relationship("Topic", back_populates="children")
+    children = relationship("Document", back_populates="subtopic")
 
 
 class Document(Base):
@@ -64,6 +66,7 @@ class Document(Base):
     content = mapped_column(Text)
     subtopic_id = mapped_column(ForeignKey("subtopic.id"))
     link = mapped_column(String)
+    subtopic = relationship("SubTopic", back_populates="children")
     keywords = mapped_column(ARRAY(String))
     ratings = mapped_column(Float, default=-1)
 
