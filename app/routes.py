@@ -563,6 +563,46 @@ def delete_resource():
         return jsonify({"error": str(e)}), 500  # 500 Internal Server Error
 
 
+@app.route("/topic", methods=["PUT"])
+def edit_topic():
+    try:
+        # Get the 'document_id' and 'topic' from the request's query parameters
+        document_id = request.args.get("document_id")
+        topic = request.args.get("topic")
+
+        # Find the document with the given document_id
+        document = (
+            db.session.query(models.Document)
+            .filter(models.Document.id == document_id)
+            .first()
+        )
+
+        if not document:
+            return jsonify({"error": "Document not found"}), 404
+
+        # Find the corresponding topic id
+        topic_id = (
+            db.session.query(models.Topic).filter(models.Topic.name == topic).first()
+        )
+
+        if not topic_id:
+            return jsonify({"error": "Topic not found"}), 404
+
+        # Update the document's topic
+        document.subtopic.topic_id = topic_id
+        db.session.commit()
+
+        return jsonify(
+            {
+                "message": f'Topic for document with ID {document_id} updated to "{topic}"'
+            }
+        )
+
+    except Exception as e:
+        # Handle any errors here and return an appropriate response
+        return jsonify({"error": str(e)}), 500  # 500 Internal Server Error
+
+
 def assign_topic(stored_document):
     embeddings = (
         db.session.query(models.Embeddings)
