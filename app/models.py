@@ -75,7 +75,7 @@ class OwnsDocument(Base):
 
     id = mapped_column(Integer, primary_key=True)
     user_id = mapped_column(ForeignKey("user.id"))
-    document_id = mapped_column(ForeignKey("document.id"))
+    document_id = mapped_column(ForeignKey("document.id", ondelete="CASCADE"))
     user = relationship("User")
     document = relationship("Document")
 
@@ -84,8 +84,8 @@ class DocSimilarity(Base):
     __tablename__ = "doc_similarity"
 
     id = mapped_column(Integer, primary_key=True)
-    new_document_id = mapped_column(ForeignKey("document.id"))
-    existing_document_id = mapped_column(ForeignKey("document.id"))
+    new_document_id = mapped_column(ForeignKey("document.id", ondelete="CASCADE"))
+    existing_document_id = mapped_column(ForeignKey("document.id", ondelete="CASCADE"))
     similarity_score = mapped_column(Float)
     new_document = relationship("Document", foreign_keys=[new_document_id])
     existing_document = relationship("Document", foreign_keys=[existing_document_id])
@@ -97,7 +97,7 @@ class Embeddings(Base):
     id = mapped_column(Integer, primary_key=True)
     split_content = mapped_column(Text)
     embedding = mapped_column(Vector(384))
-    document_id = mapped_column(ForeignKey("document.id"))
+    document_id = mapped_column(ForeignKey("document.id", ondelete="CASCADE"))
 
 
 Base.metadata.create_all(engine)

@@ -569,6 +569,7 @@ def edit_topic():
         # Get the 'document_id' and 'topic' from the request's query parameters
         document_id = request.args.get("document_id")
         topic = request.args.get("topic")
+        print(topic)
 
         # Find the document with the given document_id
         document = (
@@ -582,14 +583,17 @@ def edit_topic():
 
         # Find the corresponding topic id
         topic_id = (
-            db.session.query(models.Topic).filter(models.Topic.name == topic).first()
+            db.session.query(models.SubTopic)
+            .filter(models.SubTopic.name == topic)
+            .first()
+            .id
         )
 
         if not topic_id:
             return jsonify({"error": "Topic not found"}), 404
 
         # Update the document's topic
-        document.subtopic.topic_id = topic_id
+        document.subtopic_id = topic_id
         db.session.commit()
 
         return jsonify(
