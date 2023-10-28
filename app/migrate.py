@@ -1,7 +1,15 @@
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from app import db
-from app.models import User, Course, Topic, SubTopic
+from app.models import (
+    DocSimilarity,
+    Document,
+    Embeddings,
+    User,
+    Course,
+    Topic,
+    SubTopic,
+)
 from langchain.embeddings import HuggingFaceEmbeddings
 from app.config import SQLALCHEMY_DATABASE_URI
 from data import course_data  # Import the data module
@@ -19,6 +27,9 @@ embeddings_model = HuggingFaceEmbeddings(
 
 try:
     # Clear all data from the tables
+    session.query(Embeddings).delete()
+    session.query(DocSimilarity).delete()
+    session.query(Document).delete()
     session.query(SubTopic).delete()
     session.query(Topic).delete()
     session.query(Course).delete()
