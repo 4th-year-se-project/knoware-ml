@@ -532,6 +532,37 @@ def get_course():
     return jsonify(course_data)
 
 
+# Create a route to handle the DELETE request
+@app.route("/resource", methods=["DELETE"])
+def delete_resource():
+    try:
+        # Get the 'document_id' from the request's query parameters
+        document_id = request.args.get("document_id")
+
+        # Find the document with the given document_id
+        document = (
+            db.session.query(models.Document)
+            .filter(models.Document.id == document_id)
+            .first()
+        )
+
+        if not document:
+            return jsonify({"error": "Document not found"}), 404
+
+        # Delete the document from the database
+        db.session.delete(document)
+        db.session.commit()
+
+        # Assuming a successful deletion, return a success message
+        return jsonify(
+            {"message": f"Resource with document_id {document_id} deleted successfully"}
+        )
+
+    except Exception as e:
+        # Handle any errors here and return an appropriate response
+        return jsonify({"error": str(e)}), 500  # 500 Internal Server Error
+
+
 def assign_topic(stored_document):
     embeddings = (
         db.session.query(models.Embeddings)
