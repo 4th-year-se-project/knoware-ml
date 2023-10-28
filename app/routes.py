@@ -436,14 +436,19 @@ def get_resource_info():
             best_similarity = similarity
             best_embedding = embedding.split_content
 
-    return jsonify({
-        "title": document.title,
-        "subtopic_id": document.subtopic_id,
-        "link": document.link,
-        "keywords": document.keywords,
-        "content": best_embedding,
-        "topics": [course.name, topic.name, sub_topic.name]
-    }), 200
+    return (
+        jsonify(
+            {
+                "title": document.title,
+                "subtopic_id": document.subtopic_id,
+                "link": document.link,
+                "keywords": document.keywords,
+                "content": best_embedding,
+                "topics": [course.name, topic.name, sub_topic.name],
+            }
+        ),
+        200,
+    )
 
 
 @app.route("/course", methods=["GET"])
@@ -508,14 +513,16 @@ def get_course():
                     )
                     .first()
                 )
-                similarity_score = similarity_entry.similarity_score if similarity_entry else None
+                similarity_score = (
+                    similarity_entry.similarity_score if similarity_entry else None
+                )
 
                 document_data = {
                     "document_name": doc.title,
                     "document_id": doc.id,
                     "similarity_score": similarity_score,
                 }
-                
+
                 subtopic_data["documents"].append(document_data)
 
             topic_data["subtopics"].append(subtopic_data)
@@ -654,5 +661,7 @@ def get_keywords(docs):
         for keyword, score in keywords:
             if score > 0.64:
                 keyword_set.add(keyword)
+            if len(keyword_set) >= 5:
+                break
 
     return list(keyword_set)
