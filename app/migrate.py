@@ -7,8 +7,7 @@ from app.models import (
     Embeddings,
     User,
     Course,
-    Topic,
-    SubTopic,
+    Topic
 )
 from langchain.embeddings import HuggingFaceEmbeddings
 from app.config import SQLALCHEMY_DATABASE_URI
@@ -30,7 +29,6 @@ try:
     session.query(Embeddings).delete()
     session.query(DocSimilarity).delete()
     session.query(Document).delete()
-    session.query(SubTopic).delete()
     session.query(Topic).delete()
     session.query(Course).delete()
 
@@ -44,22 +42,11 @@ try:
             topic = Topic(name=topic_data["name"])
             course.children.append(topic)
 
-            # Create Subtopics and add them as children to the topic
-            subtopics = [
-                SubTopic(name=subtopic_name)
-                for subtopic_name in topic_data["subtopics"]
-            ]
-            topic.children = subtopics
-
             session.add(topic)
-            session.add_all(subtopics)
 
             topic_embedding = embeddings_model.embed_query(topic.name)
             topic.embedding = topic_embedding
 
-            for subtopic in subtopics:
-                subtopic_embedding = embeddings_model.embed_query(topic.name)
-                subtopic.embedding = subtopic_embedding
     session.commit()
 
 except Exception as e:

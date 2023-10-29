@@ -1,6 +1,6 @@
 import os
 from app import app, db, models
-from flask import jsonify, request
+from flask import jsonify, request, send_file
 from llama_hub.youtube_transcript import YoutubeTranscriptReader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.embeddings import HuggingFaceEmbeddings
@@ -20,6 +20,7 @@ import threading
 from keybert import KeyBERT
 from sentence_transformers import SentenceTransformer
 from pytube import YouTube
+import logging
 
 modelPath = "../models/all-MiniLM-L6-v2"
 model_kwargs = {"device": "cpu"}
@@ -48,6 +49,14 @@ ALLOWED_EXTENSIONS = {"mp3", "mp4", "mpeg", "mpga", "m4a", "wav", "webm"}
 def allowed_file(filename):
     return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
 
+# Path to the directory containing the uploaded files
+pdf_directory = os.path.join(os.getcwd(), app.config["UPLOAD_FOLDER"])
+
+@app.route("/getPdf", methods=["GET"])
+def serve_pdf():
+    filename = request.args.get("filename")
+    pdf_file_path = os.path.join(pdf_directory, filename) 
+    return send_file(pdf_file_path, as_attachment=True, mimetype='application/pdf')
 
 @app.route("/embed_youtube", methods=["POST"])
 def embed_youtube():
@@ -66,7 +75,7 @@ def embed_youtube():
     embeddings = embeddings_model.embed_documents(docs)
     keywords = get_keywords(docs)
     stored_document = models.Document(
-        title=title, content=preprocessed_transcript_text, keywords=keywords
+        title=title, content=preprocessed_transcript_text, keywords=keywords, link=video_url
     )
     db.session.add(stored_document)
     db.session.commit()
@@ -348,18 +357,17 @@ def search():
     # Create a dictionary to store the results, indexed by document ID
     results_dict = {}
 
-    # Perform a join between Embeddings and Document tables
-    # Perform a join between Embeddings, Document, Subtopic, Topic, and Course tables
+    # Perform a join between Embeddings, Document, Topic, and Course tables
+
     results = db.session.query(
-        models.Embeddings, models.Document, models.SubTopic, models.Topic, models.Course
+        models.Embeddings, models.Document, models.Topic, models.Course
     )
     results = results.join(
         models.Document, models.Embeddings.document_id == models.Document.id
     )
     results = results.join(
-        models.SubTopic, models.Document.subtopic_id == models.SubTopic.id
+        models.Topic, models.Document.topic_id == models.Topic.id
     )
-    results = results.join(models.Topic, models.SubTopic.topic_id == models.Topic.id)
     results = results.join(models.Course, models.Topic.course_id == models.Course.id)
 
     # Calculate and order by cosine distance
@@ -368,7 +376,7 @@ def search():
     )
 
     for result in results:
-        embedding, document, course, topic, subtopic = result
+        embedding, document, course, topic = result
         doc_id = document.id
         # Check if this document ID is already in the results_dict
         if doc_id not in results_dict:
@@ -378,8 +386,7 @@ def search():
                 "doc_id": doc_id,
                 "keywords": document.keywords,
                 "course": course.name,
-                "topic": topic.name,
-                "subtopic": subtopic.name,
+                "topic": topic.name
             }
 
     # Convert the results_dict values to a list
@@ -403,15 +410,9 @@ def get_resource_info():
     if not document:
         return jsonify({"error": "Document not found"}), 404
 
-    sub_topic = (
-        db.session.query(models.SubTopic)
-        .filter(models.SubTopic.id == document.subtopic_id)
-        .first()
-    )
-
     topic = (
         db.session.query(models.Topic)
-        .filter(models.Topic.id == sub_topic.topic_id)
+        .filter(models.Topic.id == document.topic_id)
         .first()
     )
 
@@ -440,11 +441,12 @@ def get_resource_info():
         jsonify(
             {
                 "title": document.title,
-                "subtopic_id": document.subtopic_id,
+                "topic_id": document.topic_id,
                 "link": document.link,
                 "keywords": document.keywords,
                 "content": best_embedding,
-                "topics": [course.name, topic.name, sub_topic.name],
+                "topics": [course.name, topic.name]
+                # "topics": [course.name, topic.name, sub_topic.name],
             }
         ),
         200,
@@ -468,7 +470,7 @@ def get_course():
     # Get the course associated with the document
     course = (
         db.session.query(models.Course)
-        .filter(models.Course.id == document.subtopic.topic.course_id)
+        .filter(models.Course.id == document.topic.course_id)
         .first()
     )
 
@@ -486,24 +488,15 @@ def get_course():
     )
 
     for topic in topics:
-        topic_data = {"topic_name": topic.name, "subtopics": []}
+        topic_data = {"topic_name": topic.name, "documents": []}
 
-        subtopics = (
-            db.session.query(models.SubTopic)
-            .filter(models.SubTopic.topic_id == topic.id)
-            .all()
+        documents = (
+                db.session.query(models.Document)
+                .filter(models.Document.topic_id == topic.id)
+                .all()
         )
 
-        for subtopic in subtopics:
-            subtopic_data = {"subtopic_name": subtopic.name, "documents": []}
-
-            documents = (
-                db.session.query(models.Document)
-                .filter(models.Document.subtopic_id == subtopic.id)
-                .all()
-            )
-
-            for doc in documents:
+        for doc in documents:
                 # Retrieve the similarity score from the 'doc_similarity' table
                 similarity_entry = (
                     db.session.query(models.DocSimilarity)
@@ -523,9 +516,7 @@ def get_course():
                     "similarity_score": similarity_score,
                 }
 
-                subtopic_data["documents"].append(document_data)
-
-            topic_data["subtopics"].append(subtopic_data)
+                topic_data["documents"].append(document_data)
 
         course_data["topics"].append(topic_data)
 
@@ -560,6 +551,7 @@ def delete_resource():
 
     except Exception as e:
         # Handle any errors here and return an appropriate response
+        logging.exception("An error occurred during deletion:")
         return jsonify({"error": str(e)}), 500  # 500 Internal Server Error
 
 
@@ -583,8 +575,8 @@ def edit_topic():
 
         # Find the corresponding topic id
         topic_id = (
-            db.session.query(models.SubTopic)
-            .filter(models.SubTopic.name == topic)
+            db.session.query(models.Topic)
+            .filter(models.Topic.name == topic)
             .first()
             .id
         )
@@ -593,7 +585,7 @@ def edit_topic():
             return jsonify({"error": "Topic not found"}), 404
 
         # Update the document's topic
-        document.subtopic_id = topic_id
+        document.topic_id = topic_id
         db.session.commit()
 
         return jsonify(
@@ -616,7 +608,6 @@ def assign_topic(stored_document):
     topics = db.session.query(models.Topic).all()
 
     best_topic = None
-    best_subtopic = None
     best_similarity = -1
 
     # Iterate through document chunks and calculate similarities with the topics
@@ -629,27 +620,9 @@ def assign_topic(stored_document):
                 best_similarity = similarity
                 best_topic = topic.id
 
-    best_similarity = -1
-
-    subtopics = (
-        db.session.query(models.SubTopic)
-        .filter(models.SubTopic.topic_id == best_topic)
-        .all()
-    )
-
-    # Iterate through document chunks and calculate similarities with the subtopics
-    for embedding in embeddings:
-        for subtopic in subtopics:
-            similarity = cosine_similarity([embedding.embedding], [subtopic.embedding])[
-                0
-            ][0]
-            if similarity > best_similarity:
-                best_similarity = similarity
-                best_subtopic = subtopic.id
-
-    # Assign best matching subtopic to the document
-    if best_subtopic is not None:
-        stored_document.subtopic_id = best_subtopic
+    # Assign best matching topic to the document
+    if best_topic is not None:
+        stored_document.topic_id = best_topic
         db.session.commit()
 
 
