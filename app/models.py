@@ -44,18 +44,7 @@ class Topic(Base):
     course_id = mapped_column(ForeignKey("course.id"))
     embedding = mapped_column(Vector(384))
     course = relationship("Course", back_populates="children")
-    children = relationship("SubTopic")
-
-
-class SubTopic(Base):
-    __tablename__ = "subtopic"
-
-    id = mapped_column(Integer, primary_key=True)
-    name = mapped_column(String)
-    topic_id = mapped_column(ForeignKey("topic.id"))
-    embedding = mapped_column(Vector(384))
-    topic = relationship("Topic", back_populates="children")
-    children = relationship("Document", back_populates="subtopic")
+    children = relationship("Document", back_populates="topic")
 
 
 class Document(Base):
@@ -64,9 +53,9 @@ class Document(Base):
     id = mapped_column(Integer, primary_key=True)
     title = mapped_column(String)
     content = mapped_column(Text)
-    subtopic_id = mapped_column(ForeignKey("subtopic.id"))
+    topic_id = mapped_column(ForeignKey("topic.id"))
     link = mapped_column(String)
-    subtopic = relationship("SubTopic", back_populates="children")
+    topic = relationship("Topic", back_populates="children")
     keywords = mapped_column(ARRAY(String))
 
 
