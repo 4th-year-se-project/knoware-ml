@@ -50,13 +50,12 @@ def allowed_file(filename):
     return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
 
 # Path to the directory containing the uploaded files
-pdf_directory = '/Users/kalsha/Desktop/git-repos/gp/knoware-ml/uploads'
+pdf_directory = os.path.join(os.getcwd(), app.config["UPLOAD_FOLDER"])
 
 @app.route("/getPdf", methods=["GET"])
 def serve_pdf():
     filename = request.args.get("filename")
-    pdf_file_path = os.path.join(pdf_directory, filename)  # Specify the PDF file name
-    #return send_file(pdf_file_path, as_attachment=True)
+    pdf_file_path = os.path.join(pdf_directory, filename) 
     return send_file(pdf_file_path, as_attachment=True, mimetype='application/pdf')
 
 @app.route("/embed_youtube", methods=["POST"])
