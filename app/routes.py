@@ -1,6 +1,6 @@
 import os
 from app import app, db, models
-from flask import jsonify, request
+from flask import jsonify, request, send_file
 from llama_hub.youtube_transcript import YoutubeTranscriptReader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.embeddings import HuggingFaceEmbeddings
@@ -20,6 +20,7 @@ import threading
 from keybert import KeyBERT
 from sentence_transformers import SentenceTransformer
 from pytube import YouTube
+import logging
 
 modelPath = "../models/all-MiniLM-L6-v2"
 model_kwargs = {"device": "cpu"}
@@ -48,6 +49,15 @@ ALLOWED_EXTENSIONS = {"mp3", "mp4", "mpeg", "mpga", "m4a", "wav", "webm"}
 def allowed_file(filename):
     return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
 
+# Path to the directory containing the uploaded files
+pdf_directory = '/Users/kalsha/Desktop/git-repos/gp/knoware-ml/uploads'
+
+@app.route("/getPdf", methods=["GET"])
+def serve_pdf():
+    filename = request.args.get("filename")
+    pdf_file_path = os.path.join(pdf_directory, filename)  # Specify the PDF file name
+    #return send_file(pdf_file_path, as_attachment=True)
+    return send_file(pdf_file_path, as_attachment=True, mimetype='application/pdf')
 
 @app.route("/embed_youtube", methods=["POST"])
 def embed_youtube():
@@ -66,7 +76,7 @@ def embed_youtube():
     embeddings = embeddings_model.embed_documents(docs)
     keywords = get_keywords(docs)
     stored_document = models.Document(
-        title=title, content=preprocessed_transcript_text, keywords=keywords
+        title=title, content=preprocessed_transcript_text, keywords=keywords, link=video_url
     )
     db.session.add(stored_document)
     db.session.commit()
@@ -542,6 +552,7 @@ def delete_resource():
 
     except Exception as e:
         # Handle any errors here and return an appropriate response
+        logging.exception("An error occurred during deletion:")
         return jsonify({"error": str(e)}), 500  # 500 Internal Server Error
 
 
@@ -565,8 +576,8 @@ def edit_topic():
 
         # Find the corresponding topic id
         topic_id = (
-            db.session.query(models.SubTopic)
-            .filter(models.SubTopic.name == topic)
+            db.session.query(models.Topic)
+            .filter(models.Topic.name == topic)
             .first()
             .id
         )
@@ -575,7 +586,7 @@ def edit_topic():
             return jsonify({"error": "Topic not found"}), 404
 
         # Update the document's topic
-        document.subtopic_id = topic_id
+        document.topic_id = topic_id
         db.session.commit()
 
         return jsonify(
