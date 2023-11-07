@@ -44,18 +44,7 @@ class Topic(Base):
     course_id = mapped_column(ForeignKey("course.id"))
     embedding = mapped_column(Vector(384))
     course = relationship("Course", back_populates="children")
-    children = relationship("SubTopic")
-
-
-class SubTopic(Base):
-    __tablename__ = "subtopic"
-
-    id = mapped_column(Integer, primary_key=True)
-    name = mapped_column(String)
-    topic_id = mapped_column(ForeignKey("topic.id"))
-    embedding = mapped_column(Vector(384))
-    topic = relationship("Topic", back_populates="children")
-    children = relationship("Document", back_populates="subtopic")
+    children = relationship("Document", back_populates="topic")
 
 
 class Document(Base):
@@ -64,9 +53,9 @@ class Document(Base):
     id = mapped_column(Integer, primary_key=True)
     title = mapped_column(String)
     content = mapped_column(Text)
-    subtopic_id = mapped_column(ForeignKey("subtopic.id"))
+    topic_id = mapped_column(ForeignKey("topic.id"))
     link = mapped_column(String)
-    subtopic = relationship("SubTopic", back_populates="children")
+    topic = relationship("Topic", back_populates="children")
     keywords = mapped_column(ARRAY(String))
     ratings = mapped_column(Float, default=-1)
 
@@ -76,7 +65,7 @@ class OwnsDocument(Base):
 
     id = mapped_column(Integer, primary_key=True)
     user_id = mapped_column(ForeignKey("user.id"))
-    document_id = mapped_column(ForeignKey("document.id"))
+    document_id = mapped_column(ForeignKey("document.id", ondelete="CASCADE"))
     user = relationship("User")
     document = relationship("Document")
 
@@ -85,8 +74,8 @@ class DocSimilarity(Base):
     __tablename__ = "doc_similarity"
 
     id = mapped_column(Integer, primary_key=True)
-    new_document_id = mapped_column(ForeignKey("document.id"))
-    existing_document_id = mapped_column(ForeignKey("document.id"))
+    new_document_id = mapped_column(ForeignKey("document.id", ondelete="CASCADE"))
+    existing_document_id = mapped_column(ForeignKey("document.id", ondelete="CASCADE"))
     similarity_score = mapped_column(Float)
     new_document = relationship("Document", foreign_keys=[new_document_id])
     existing_document = relationship("Document", foreign_keys=[existing_document_id])
@@ -98,7 +87,7 @@ class Embeddings(Base):
     id = mapped_column(Integer, primary_key=True)
     split_content = mapped_column(Text)
     embedding = mapped_column(Vector(384))
-    document_id = mapped_column(ForeignKey("document.id"))
+    document_id = mapped_column(ForeignKey("document.id", ondelete="CASCADE"))
 
 
 Base.metadata.create_all(engine)
