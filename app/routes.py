@@ -411,10 +411,11 @@ def search_similar_resource():
             models.DocSimilarity.similarity_score.desc()
             ).slice(0, 5).all()
 
+    all_users = (db.session.query(models.User.id).count())
+
     x=0
     for result in doc_results:
         user_count = (db.session.query(models.OwnsDocument).filter(models.OwnsDocument.document_id == result.existing_document_id).count())
-        all_users = (db.session.query(models.User.id).count())
         recommending_doc_ratings = (db.session.query( models.Document.ratings).filter(models.Document.id == result.existing_document_id).scalar())
         recommending_doc_title = (db.session.query(models.Document.title).filter(models.Document.id == result.existing_document_id).scalar())
         response_dict[x] = {
