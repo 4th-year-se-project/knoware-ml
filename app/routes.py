@@ -400,17 +400,30 @@ def search_similar_resource():
     data = request.json
     doc_id = data.get("document_id")
 
+    topic_id = (db.session.query(models.Document.topic_id).filter(models.Document.id == doc_id).first())[0]
+
+    course_id = (db.session.query(models.Topic.course_id).filter(models.Topic.id == topic_id).first())[0]
+
+    # print(course_id)
+
+    similar_topic_ids = (db.session.query(models.Topic.id).filter(models.Topic.course_id == course_id).all())
+    similar_topic_ids = [topic_id for (topic_id,) in similar_topic_ids]
+
+    similar_topic_docs = (db.session.query(models.Document.id).filter(models.Document.topic_id.in_(similar_topic_ids)).all())
+    similar_topic_docs = [document_id for (document_id,) in similar_topic_docs]
+    print(similar_topic_docs)
+
     response_dict = {}
 
     doc_results = db.session.query(
         models.DocSimilarity
         ).filter(
-        models.DocSimilarity.new_document_id == doc_id, 
+        models.DocSimilarity.new_document_id.in_(similar_topic_docs), 
         models.DocSimilarity.existing_document_id != models.DocSimilarity.new_document_id
         ).order_by(
             models.DocSimilarity.similarity_score.desc()
             ).slice(0, 5).all()
-
+   
     all_users = (db.session.query(models.User.id).count())
 
     x=0
