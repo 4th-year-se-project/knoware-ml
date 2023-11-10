@@ -21,6 +21,9 @@ from keybert import KeyBERT
 from sentence_transformers import SentenceTransformer
 from pytube import YouTube
 import logging
+from passlib.hash import sha256_crypt
+import jwt
+from datetime import datetime, timedelta
 
 modelPath = "../models/all-MiniLM-L6-v2"
 model_kwargs = {"device": "cpu"}
@@ -713,3 +716,50 @@ def get_keywords(docs):
                 break
 
     return list(keyword_set)
+
+def authenticate(username, password):
+    user = {}
+    user['username'] = username
+    user['password'] = db.session.query(models.User.password).filter(models.User.username == username).first()[0]
+
+
+    if sha256_crypt.verify(password, user['password']):
+        return user
+
+
+@app.route('/login', methods=['POST'])
+def login():
+    data = request.json
+    if not data or 'username' not in data or 'password' not in data:
+        return jsonify({"message": "Missing username or password"}), 400
+
+    username = data['username']
+    password = data['password']
+
+    user = authenticate(username, password)
+
+    if user:
+        token = jwt.encode({'identity': user['username'], 'exp': datetime.utcnow() + timedelta(hours=1)}, app.config['SECRET_KEY'], algorithm='HS256')
+        return jsonify({"access_token": token}), 200
+    else:
+        return jsonify({"message": "Invalid username or password"}), 401
+
+# @app.route('logout')
+# def logout():
+#   session['logged_in'] = False
+#   return home()
+
+@app.route('/register')
+def index():
+    id=15
+    name = "Perera"
+    password = sha256_crypt.encrypt("Perera123")
+    email = "perera@gmail.com"
+
+    new_user = models.User(
+        id=id, name=name, username=email, password=password
+    )
+    db.session.add(new_user)
+    db.session.commit()
+
+    return "New user added"
