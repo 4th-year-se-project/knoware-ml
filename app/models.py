@@ -59,6 +59,7 @@ class Document(Base):
     link = mapped_column(String)
     topic = relationship("Topic", back_populates="children")
     keywords = mapped_column(ARRAY(String))
+    ratings = mapped_column(Float, default=5)
 
 
 class OwnsDocument(Base):
