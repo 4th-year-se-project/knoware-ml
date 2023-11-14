@@ -1,6 +1,7 @@
+from functools import wraps
 import os
 from app import app, db, models
-from flask import jsonify, request, send_file
+from flask import jsonify, request, send_file, g
 from llama_hub.youtube_transcript import YoutubeTranscriptReader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.embeddings import HuggingFaceEmbeddings
@@ -794,10 +795,36 @@ def login():
     else:
         return jsonify({"message": "Invalid username or password"}), 401
 
-# @app.route('logout')
-# def logout():
-#   session['logged_in'] = False
-#   return home()
+
+def token_required(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        token = None
+
+        if 'Authorization' in request.headers:
+            auth_header = request.headers['Authorization']
+            token = auth_header.split(" ")[1] if auth_header.startswith("Bearer ") else None
+
+        if not token:
+            return jsonify({"message": "Token is missing"}), 401
+
+        try:
+            data = jwt.decode(token, app.config['SECRET_KEY'], algorithms=['HS256'])
+            g.user = data['identity']  # Store the user identity in Flask's context 'g'
+        except jwt.ExpiredSignatureError:
+            return jsonify({"message": "Token has expired"}), 401
+        except jwt.InvalidTokenError:
+            return jsonify({"message": "Invalid token"}), 401
+
+        return f(*args, **kwargs)
+
+    return decorated
+
+
+@app.route('/protected', methods=['GET'])
+@token_required
+def protected():
+    return jsonify({"message": "This is a protected route", "user": g.user}), 200
 
 @app.route('/register')
 def index():
