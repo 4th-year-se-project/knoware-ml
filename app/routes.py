@@ -56,13 +56,39 @@ def allowed_file(filename):
 # Path to the directory containing the uploaded files
 pdf_directory = os.path.join(os.getcwd(), app.config["UPLOAD_FOLDER"])
 
+def token_required(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        token = None
+
+        if 'Authorization' in request.headers:
+            auth_header = request.headers['Authorization']
+            token = auth_header.split(" ")[1] if auth_header.startswith("Bearer ") else None
+
+        if not token:
+            return jsonify({"message": "Token is missing"}), 401
+
+        try:
+            data = jwt.decode(token, app.config['SECRET_KEY'], algorithms=['HS256'])
+            g.user = data['identity']  # Store the user identity in Flask's context 'g'
+        except jwt.ExpiredSignatureError:
+            return jsonify({"message": "Token has expired"}), 401
+        except jwt.InvalidTokenError:
+            return jsonify({"message": "Invalid token"}), 401
+
+        return f(*args, **kwargs)
+
+    return decorated
+
 @app.route("/getPdf", methods=["GET"])
+@token_required
 def serve_pdf():
     filename = request.args.get("filename")
     pdf_file_path = os.path.join(pdf_directory, filename) 
     return send_file(pdf_file_path, as_attachment=True, mimetype='application/pdf')
 
 @app.route("/embed_youtube", methods=["POST"])
+@token_required
 def embed_youtube():
     loader = YoutubeTranscriptReader()
     data = request.json
@@ -106,6 +132,7 @@ def embed_youtube():
 
 
 @app.route("/embed_pdf", methods=["POST"])
+@token_required
 def embed_pdf():
     loader = PDFReader()
     # Check if the post request has the file part
@@ -167,6 +194,7 @@ def embed_pdf():
 
 
 @app.route("/embed_pptx", methods=["POST"])
+@token_required
 def embed_pptx():
     loader = PptxReader()
     # Check if the post request has the file part
@@ -228,6 +256,7 @@ def embed_pptx():
 
 
 @app.route("/embed_audio", methods=["POST"])
+@token_required
 def embed_audio():
     # Check if the post request has the audio file part
     if "file" not in request.files:
@@ -287,6 +316,7 @@ def embed_audio():
 
 
 @app.route("/embed_docx", methods=["POST"])
+@token_required
 def embed_docx():
     loader = DocxReader()
     # Check if the post request has the file part
@@ -353,6 +383,7 @@ def embed_docx():
 
 
 @app.route("/search", methods=["POST"])
+@token_required
 def search():
     data = request.json
     query = data.get("query")
@@ -396,10 +427,11 @@ def search():
     # Convert the results_dict values to a list
     response_data = list(results_dict.values())
 
-    return {"results": response_data}
+    return {"results": response_data}, 200
 
 
 @app.route("/recommend", methods=["POST"])
+@token_required
 def search_similar_resource():
     data = request.json
     doc_id = data.get("document_id")
@@ -450,6 +482,7 @@ def search_similar_resource():
     return {"results": response_data}
 
 @app.route("/resource-info", methods=["GET"])
+@token_required
 def get_resource_info():
     document_id = request.args.get("document_id")
     query = request.args.get("query")
@@ -508,6 +541,7 @@ def get_resource_info():
 
 
 @app.route("/course", methods=["GET"])
+@token_required
 def get_course():
     document_id = request.args.get("document_id")
 
@@ -579,6 +613,7 @@ def get_course():
 
 # Create a route to handle the DELETE request
 @app.route("/resource", methods=["DELETE"])
+@token_required
 def delete_resource():
     try:
         # Get the 'document_id' from the request's query parameters
@@ -610,6 +645,7 @@ def delete_resource():
 
 
 @app.route("/topic", methods=["PUT"])
+@token_required
 def edit_topic():
     try:
         # Get the 'document_id' and 'topic' from the request's query parameters
@@ -791,40 +827,11 @@ def login():
 
     if user:
         token = jwt.encode({'identity': user['username'], 'exp': datetime.utcnow() + timedelta(hours=1)}, app.config['SECRET_KEY'], algorithm='HS256')
+        print(token)
         return jsonify({"access_token": token}), 200
     else:
         return jsonify({"message": "Invalid username or password"}), 401
 
-
-def token_required(f):
-    @wraps(f)
-    def decorated(*args, **kwargs):
-        token = None
-
-        if 'Authorization' in request.headers:
-            auth_header = request.headers['Authorization']
-            token = auth_header.split(" ")[1] if auth_header.startswith("Bearer ") else None
-
-        if not token:
-            return jsonify({"message": "Token is missing"}), 401
-
-        try:
-            data = jwt.decode(token, app.config['SECRET_KEY'], algorithms=['HS256'])
-            g.user = data['identity']  # Store the user identity in Flask's context 'g'
-        except jwt.ExpiredSignatureError:
-            return jsonify({"message": "Token has expired"}), 401
-        except jwt.InvalidTokenError:
-            return jsonify({"message": "Invalid token"}), 401
-
-        return f(*args, **kwargs)
-
-    return decorated
-
-
-@app.route('/protected', methods=['GET'])
-@token_required
-def protected():
-    return jsonify({"message": "This is a protected route", "user": g.user}), 200
 
 @app.route('/register')
 def index():
