@@ -101,7 +101,7 @@ def embed_youtube():
     return "Embeddings saved in the database."
 
 
-@app.route("/embed_pdf", methods=["POST"])
+@app.route("/embed_pdf", methods=["POST","OPTIONS"])
 def embed_pdf():
     loader = PDFReader()
     # Check if the post request has the file part
@@ -348,7 +348,7 @@ def embed_docx():
         return "Embeddings saved in the database."
 
 
-@app.route("/search", methods=["POST"])
+@app.route("/search", methods=["POST","OPTIONS"])
 def search():
     data = request.json
     query = data.get("query")
