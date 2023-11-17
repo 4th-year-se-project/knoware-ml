@@ -80,6 +80,7 @@ def token_required(f):
 
     return decorated
 
+
 @app.route("/getPdf", methods=["GET"])
 @token_required
 def serve_pdf():
@@ -816,6 +817,8 @@ def get_keywords(docs):
                 break
 
     return list(keyword_set)
+
+
 def authenticate(username, password):
     user = {}
     user['username'] = username
