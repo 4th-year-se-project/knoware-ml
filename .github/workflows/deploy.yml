@@ -1,1 +1,33 @@
+name: Deploy to DigitalOcean
 
+on:
+  push:
+    branches:
+      - deployment  # Adjust this to your deployment branch name
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v2
+
+      - name: Set up Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: 3.8.10
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt  # Adjust as per your project
+
+      - name: Deploy to Droplet
+        run: |
+          cd ~/knoware/knoware-ml
+          source ml/bin/activate
+          git pull origin deployment
+          pip install -r requirements.txt
+          systemctl restart knoware
+          systemctl restart nginx

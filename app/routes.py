@@ -52,13 +52,13 @@ def allowed_file(filename):
 # Path to the directory containing the uploaded files
 pdf_directory = os.path.join(os.getcwd(), app.config["UPLOAD_FOLDER"])
 
-@app.route("/getPdf", methods=["GET"])
+@app.route("/getPdf", methods=["GET","OPTIONS"])
 def serve_pdf():
     filename = request.args.get("filename")
     pdf_file_path = os.path.join(pdf_directory, filename) 
     return send_file(pdf_file_path, as_attachment=True, mimetype='application/pdf')
 
-@app.route("/embed_youtube", methods=["POST"])
+@app.route("/embed_youtube", methods=["POST","OPTIONS"])
 def embed_youtube():
     loader = YoutubeTranscriptReader()
     data = request.json
@@ -162,7 +162,7 @@ def embed_pdf():
         return "Embeddings saved in the database."
 
 
-@app.route("/embed_pptx", methods=["POST"])
+@app.route("/embed_pptx", methods=["POST","OPTIONS"])
 def embed_pptx():
     loader = PptxReader()
     # Check if the post request has the file part
@@ -223,7 +223,7 @@ def embed_pptx():
         return "Embeddings saved in the database."
 
 
-@app.route("/embed_audio", methods=["POST"])
+@app.route("/embed_audio", methods=["POST","OPTIONS"])
 def embed_audio():
     # Check if the post request has the audio file part
     if "file" not in request.files:
@@ -282,7 +282,7 @@ def embed_audio():
         return "Invalid audio file format. Allowed extensions: mp3, mp4, mpeg, mpga, m4a, wav, webm"
 
 
-@app.route("/embed_docx", methods=["POST"])
+@app.route("/embed_docx", methods=["POST","OPTIONS"])
 def embed_docx():
     loader = DocxReader()
     # Check if the post request has the file part
@@ -395,7 +395,7 @@ def search():
     return {"results": response_data}
 
 
-@app.route("/recommend", methods=["POST"])
+@app.route("/recommend", methods=["POST","OPTIONS"])
 def search_similar_resource():
     data = request.json
     doc_id = data.get("document_id")
@@ -445,7 +445,7 @@ def search_similar_resource():
 
     return {"results": response_data}
 
-@app.route("/resource-info", methods=["GET"])
+@app.route("/resource-info", methods=["GET","OPTIONS"])
 def get_resource_info():
     document_id = request.args.get("document_id")
     query = request.args.get("query")
@@ -503,7 +503,7 @@ def get_resource_info():
     )
 
 
-@app.route("/course", methods=["GET"])
+@app.route("/course", methods=["GET","OPTIONS"])
 def get_course():
     document_id = request.args.get("document_id")
 
@@ -574,7 +574,7 @@ def get_course():
 
 
 # Create a route to handle the DELETE request
-@app.route("/resource", methods=["DELETE"])
+@app.route("/resource", methods=["DELETE","OPTIONS"])
 def delete_resource():
     try:
         # Get the 'document_id' from the request's query parameters
@@ -605,7 +605,7 @@ def delete_resource():
         return jsonify({"error": str(e)}), 500  # 500 Internal Server Error
 
 
-@app.route("/topic", methods=["PUT"])
+@app.route("/topic", methods=["PUT","OPTIONS"])
 def edit_topic():
     try:
         # Get the 'document_id' and 'topic' from the request's query parameters

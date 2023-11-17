@@ -10,15 +10,12 @@ app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024
 db = SQLAlchemy(app)
 migrate = Migrate(app, db)
 
-#CORS(app, resources={r"/api/*": {"origins": "https://knoware-frontend.vercel.app/"}})
-#CORS(app)
-
-#CORS(
-#    app,
-#    resources={r"/api/*": {"origins": "https://knoware-frontend.vercel.app"}},
-#    supports_credentials=True,
-#    allow_headers=["Content-Type", "Authorization"],
-#    expose_headers=["Content-Type", "Authorization"],
-#)
+CORS(
+   app,
+   resources={r"/api/*": {"origins": "https://knoware-frontend.vercel.app"}},
+   supports_credentials=True,
+   allow_headers=["Content-Type", "Authorization"],
+   expose_headers=["Content-Type", "Authorization"],
+)
 
 from app import routes, models
