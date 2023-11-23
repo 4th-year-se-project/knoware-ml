@@ -4,10 +4,10 @@ from app import models
 from models import db
 
 
-recomend_routes = Blueprint("recomend_routes", __name__)
+recommend_routes = Blueprint("recommend_routes", __name__)
 
 
-@recomend_routes.route("/recommend", methods=["POST"])
+@recommend_routes.route("/recommend", methods=["POST"])
 def search_similar_resource():
     data = request.json
     doc_id = data.get("document_id")
