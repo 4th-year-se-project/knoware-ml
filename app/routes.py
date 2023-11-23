@@ -49,350 +49,16 @@ ALLOWED_EXTENSIONS = {"mp3", "mp4", "mpeg", "mpga", "m4a", "wav", "webm"}
 def allowed_file(filename):
     return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
 
+
 # Path to the directory containing the uploaded files
 pdf_directory = os.path.join(os.getcwd(), app.config["UPLOAD_FOLDER"])
+
 
 @app.route("/getPdf", methods=["GET"])
 def serve_pdf():
     filename = request.args.get("filename")
-    pdf_file_path = os.path.join(pdf_directory, filename) 
-    return send_file(pdf_file_path, as_attachment=True, mimetype='application/pdf')
-
-@app.route("/embed_youtube", methods=["POST"])
-def embed_youtube():
-    loader = YoutubeTranscriptReader()
-    data = request.json
-
-    video_url = data.get("video_url")
-    yt = YouTube(video_url)
-    title = yt.title
-
-    documents = loader.load_data(ytlinks=[video_url])
-    transcript_text = documents[0].text
-    preprocessed_transcript_text = preprocess_text(transcript_text)
-    text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=150)
-    docs = text_splitter.split_text(transcript_text)
-    embeddings = embeddings_model.embed_documents(docs)
-    keywords = get_keywords(docs)
-    stored_document = models.Document(
-        title=title, content=preprocessed_transcript_text, keywords=keywords, link=video_url
-    )
-    db.session.add(stored_document)
-    db.session.commit()
-
-    # Start a new thread to execute calculate_and_store_similarity
-    similarity_thread = threading.Thread(
-        target=calculate_and_store_similarity,
-        args=(stored_document.id, preprocessed_transcript_text),
-    )
-    similarity_thread.start()
-
-    for embedding, doc in zip(embeddings, docs):
-        stored_embedding = models.Embeddings(
-            split_content=doc,
-            embedding=embedding,
-            document_id=stored_document.id,
-        )
-        db.session.add(stored_embedding)
-    db.session.commit()
-
-    assign_topic(stored_document)
-
-    return "Embeddings saved in the database."
-
-
-@app.route("/embed_pdf", methods=["POST"])
-def embed_pdf():
-    loader = PDFReader()
-    # Check if the post request has the file part
-    if "file" not in request.files:
-        return "No file part"
-
-    file = request.files["file"]
-
-    # If the user does not select a file, the browser may also submit an empty part without filename
-    if file.filename == "":
-        return "No selected file"
-
-    if file:
-        # Securely save the uploaded file
-        filename = secure_filename(file.filename)
-        filepath = os.path.join(app.config["UPLOAD_FOLDER"], filename)
-        file.save(filepath)
-
-        # Load and process the PDF content
-        documents = loader.load_data(
-            file=Path(filepath)
-        )  # Implement the PDF loading function
-        document_texts = [document.text for document in documents]
-        document_text = "".join(document_texts)
-        preprocessed_text = preprocess_text(document_text)
-        text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=1000, chunk_overlap=150
-        )
-        docs = text_splitter.split_text(document_text)
-        embeddings = embeddings_model.embed_documents(docs)
-        keywords = get_keywords(docs)
-
-        stored_document = models.Document(
-            title=filename, content=preprocessed_text, keywords=keywords
-        )
-        db.session.add(stored_document)
-        db.session.commit()
-
-        # Start a new thread to execute calculate_and_store_similarity
-        similarity_thread = threading.Thread(
-            target=calculate_and_store_similarity,
-            args=(stored_document.id, preprocessed_text),
-        )
-        similarity_thread.start()
-
-        # Store the embeddings in the database
-        for embedding, doc in zip(embeddings, docs):
-            stored_embedding = models.Embeddings(
-                split_content=doc,
-                embedding=embedding,
-                document_id=stored_document.id,
-            )
-            db.session.add(stored_embedding)
-        db.session.commit()
-
-        assign_topic(stored_document)
-
-        return "Embeddings saved in the database."
-
-
-@app.route("/embed_pptx", methods=["POST"])
-def embed_pptx():
-    loader = PptxReader()
-    # Check if the post request has the file part
-    if "file" not in request.files:
-        return "No file part"
-
-    file = request.files["file"]
-
-    # If the user does not select a file, the browser may also submit an empty part without filename
-    if file.filename == "":
-        return "No selected file"
-
-    if file:
-        # Securely save the uploaded file
-        filename = secure_filename(file.filename)
-        filepath = os.path.join(app.config["UPLOAD_FOLDER"], filename)
-        file.save(filepath)
-
-        # Load and process the PDF content
-        documents = loader.load_data(
-            file=Path(filepath)
-        )  # Implement the PDF loading function
-        text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=1000, chunk_overlap=150
-        )
-        document_texts = [document.text for document in documents]
-        document_text = "".join(document_texts)
-        preprocessed_text = preprocess_text(document_text)
-        docs = text_splitter.split_text(document_text)
-        embeddings = embeddings_model.embed_documents(docs)
-        keywords = get_keywords(docs)
-
-        stored_document = models.Document(
-            title=filename, content=preprocessed_text, keywords=keywords
-        )
-        db.session.add(stored_document)
-        db.session.commit()
-
-        # Start a new thread to execute calculate_and_store_similarity
-        similarity_thread = threading.Thread(
-            target=calculate_and_store_similarity,
-            args=(stored_document.id, preprocessed_text),
-        )
-        similarity_thread.start()
-
-        # Store the embeddings in the database
-        for embedding, chunk in zip(embeddings, docs):
-            stored_embedding = models.Embeddings(
-                split_content=chunk,
-                embedding=embedding,
-                document_id=stored_document.id,
-            )
-            db.session.add(stored_embedding)
-        db.session.commit()
-
-        assign_topic(stored_document)
-
-        return "Embeddings saved in the database."
-
-
-@app.route("/embed_audio", methods=["POST"])
-def embed_audio():
-    # Check if the post request has the audio file part
-    if "file" not in request.files:
-        return "No audio file part"
-
-    audio_file = request.files["file"]
-
-    # If the user does not select a file, the browser may also submit an empty part without filename
-    if audio_file.filename == "":
-        return "No selected audio file"
-
-    if audio_file and allowed_file(audio_file.filename):
-        # Securely save the uploaded audio file
-        filename = secure_filename(audio_file.filename)
-        filepath = os.path.join(app.config["UPLOAD_FOLDER"], filename)
-        audio_file.save(filepath)
-
-        # Load and process the audio content
-        transcript = whisper_model.transcribe(filepath)
-        preprocessed_text = preprocess_text(transcript["text"])
-        text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=1000, chunk_overlap=150
-        )
-        docs = text_splitter.split_text(transcript["text"])
-
-        embeddings = embeddings_model.embed_documents(docs)
-
-        keywords = get_keywords(docs)
-        stored_document = models.Document(
-            title=filename, content=preprocessed_text, keywords=keywords
-        )
-        db.session.add(stored_document)
-        db.session.commit()
-
-        # Start a new thread to execute calculate_and_store_similarity
-        similarity_thread = threading.Thread(
-            target=calculate_and_store_similarity,
-            args=(stored_document.id, preprocessed_text),
-        )
-        similarity_thread.start()
-
-        # Store the embeddings in the database
-        for embedding, chunk in zip(embeddings, docs):
-            stored_embedding = models.Embeddings(
-                split_content=chunk,
-                embedding=embedding,
-                document_id=stored_document.id,
-            )
-            db.session.add(stored_embedding)
-        db.session.commit()
-
-        assign_topic(stored_document)
-
-        return "Audio embeddings saved in the database."
-    else:
-        return "Invalid audio file format. Allowed extensions: mp3, mp4, mpeg, mpga, m4a, wav, webm"
-
-
-@app.route("/embed_docx", methods=["POST"])
-def embed_docx():
-    loader = DocxReader()
-    # Check if the post request has the file part
-    if "file" not in request.files:
-        return "No file part"
-
-    file = request.files["file"]
-
-    # If the user does not select a file, the browser may also submit an empty part without filename
-    if file.filename == "":
-        return "No selected file"
-
-    if file:
-        # Securely save the uploaded file
-        filename = secure_filename(file.filename)
-        filepath = os.path.join(app.config["UPLOAD_FOLDER"], filename)
-        file.save(filepath)
-
-        # Load and process the docx content
-        documents = loader.load_data(
-            file=Path(filepath)
-        )  # Implement the docx loading function
-
-        document_texts = [document.text for document in documents]
-        document_text = "".join(document_texts)
-
-        preprocessed_text = preprocess_text(document_text)
-        text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=1000, chunk_overlap=150
-        )
-
-        docs = text_splitter.split_text(document_text)
-
-        embeddings = embeddings_model.embed_documents(docs)
-
-        keywords = get_keywords(docs)
-
-        stored_document = models.Document(
-            title=filename, content=preprocessed_text, keywords=keywords
-        )
-        db.session.add(stored_document)
-        db.session.commit()
-
-        # Start a new thread to execute calculate_and_store_similarity
-        similarity_thread = threading.Thread(
-            target=calculate_and_store_similarity,
-            args=(stored_document.id, preprocessed_text),
-        )
-        similarity_thread.start()
-
-        # Store the embeddings in the database
-        for embedding, doc in zip(embeddings, docs):
-            stored_embedding = models.Embeddings(
-                split_content=doc,
-                embedding=embedding,
-                document_id=stored_document.id,
-            )
-            db.session.add(stored_embedding)
-        db.session.commit()
-
-        assign_topic(stored_document)
-
-        return "Embeddings saved in the database."
-
-
-@app.route("/search", methods=["POST"])
-def search():
-    data = request.json
-    query = data.get("query")
-    query_embedding = embeddings_model.embed_query(query)
-
-    # Create a dictionary to store the results, indexed by document ID
-    results_dict = {}
-
-    # Perform a join between Embeddings, Document, Topic, and Course tables
-
-    results = db.session.query(
-        models.Embeddings, models.Document, models.Topic, models.Course
-    )
-    results = results.join(
-        models.Document, models.Embeddings.document_id == models.Document.id
-    )
-    results = results.join(
-        models.Topic, models.Document.topic_id == models.Topic.id
-    )
-    results = results.join(models.Course, models.Topic.course_id == models.Course.id)
-
-    # Calculate and order by cosine distance
-    results = results.order_by(
-        models.Embeddings.embedding.cosine_distance(query_embedding)
-    )
-
-    for result in results:
-        embedding, document, course, topic = result
-        doc_id = document.id
-        # Check if this document ID is already in the results_dict
-        if doc_id not in results_dict:
-            results_dict[doc_id] = {
-                "title": document.title,
-                "content": embedding.split_content,
-                "doc_id": doc_id,
-                "keywords": document.keywords,
-                "course": course.name,
-                "topic": topic.name
-            }
-
-    # Convert the results_dict values to a list
-    response_data = list(results_dict.values())
-
-    return {"results": response_data}
+    pdf_file_path = os.path.join(pdf_directory, filename)
+    return send_file(pdf_file_path, as_attachment=True, mimetype="application/pdf")
 
 
 @app.route("/recommend", methods=["POST"])
@@ -400,50 +66,86 @@ def search_similar_resource():
     data = request.json
     doc_id = data.get("document_id")
 
-    topic_id = (db.session.query(models.Document.topic_id).filter(models.Document.id == doc_id).first())[0]
+    topic_id = (
+        db.session.query(models.Document.topic_id)
+        .filter(models.Document.id == doc_id)
+        .first()
+    )[0]
 
-    course_id = (db.session.query(models.Topic.course_id).filter(models.Topic.id == topic_id).first())[0]
+    course_id = (
+        db.session.query(models.Topic.course_id)
+        .filter(models.Topic.id == topic_id)
+        .first()
+    )[0]
 
     # print(course_id)
 
-    similar_topic_ids = (db.session.query(models.Topic.id).filter(models.Topic.course_id == course_id).all())
+    similar_topic_ids = (
+        db.session.query(models.Topic.id)
+        .filter(models.Topic.course_id == course_id)
+        .all()
+    )
     similar_topic_ids = [topic_id for (topic_id,) in similar_topic_ids]
 
-    similar_topic_docs = (db.session.query(models.Document.id).filter(models.Document.topic_id.in_(similar_topic_ids)).all())
+    similar_topic_docs = (
+        db.session.query(models.Document.id)
+        .filter(models.Document.topic_id.in_(similar_topic_ids))
+        .all()
+    )
     similar_topic_docs = [document_id for (document_id,) in similar_topic_docs]
     print(similar_topic_docs)
 
     response_dict = {}
 
-    doc_results = db.session.query(
-        models.DocSimilarity
-        ).filter(
-        models.DocSimilarity.new_document_id.in_(similar_topic_docs), 
-        models.DocSimilarity.existing_document_id != models.DocSimilarity.new_document_id
-        ).order_by(
-            models.DocSimilarity.similarity_score.desc()
-            ).slice(0, 5).all()
-   
-    all_users = (db.session.query(models.User.id).count())
+    doc_results = (
+        db.session.query(models.DocSimilarity)
+        .filter(
+            models.DocSimilarity.new_document_id.in_(similar_topic_docs),
+            models.DocSimilarity.existing_document_id
+            != models.DocSimilarity.new_document_id,
+        )
+        .order_by(models.DocSimilarity.similarity_score.desc())
+        .slice(0, 5)
+        .all()
+    )
 
-    x=0
+    all_users = db.session.query(models.User.id).count()
+
+    x = 0
     for result in doc_results:
-        user_count = (db.session.query(models.OwnsDocument).filter(models.OwnsDocument.document_id == result.existing_document_id).count())
-        recommending_doc_ratings = (db.session.query( models.Document.ratings).filter(models.Document.id == result.existing_document_id).scalar())
-        recommending_doc_title = (db.session.query(models.Document.title).filter(models.Document.id == result.existing_document_id).scalar())
+        user_count = (
+            db.session.query(models.OwnsDocument)
+            .filter(models.OwnsDocument.document_id == result.existing_document_id)
+            .count()
+        )
+        recommending_doc_ratings = (
+            db.session.query(models.Document.ratings)
+            .filter(models.Document.id == result.existing_document_id)
+            .scalar()
+        )
+        recommending_doc_title = (
+            db.session.query(models.Document.title)
+            .filter(models.Document.id == result.existing_document_id)
+            .scalar()
+        )
         response_dict[x] = {
             "document_id": result.existing_document_id,
             "document_title": recommending_doc_title,
             "ratings": recommending_doc_ratings,
             "similarity_score": result.similarity_score,
             "user_count": user_count,
-            "similarity_weight": (user_count / all_users) * result.similarity_score * (recommending_doc_ratings / 5)         
+            "similarity_weight": (user_count / all_users)
+            * result.similarity_score
+            * (recommending_doc_ratings / 5),
         }
-        x=x+1
+        x = x + 1
 
-    response_data = sorted(response_dict.values(), key=lambda x: x["similarity_weight"], reverse=True)
+    response_data = sorted(
+        response_dict.values(), key=lambda x: x["similarity_weight"], reverse=True
+    )
 
     return {"results": response_data}
+
 
 @app.route("/resource-info", methods=["GET"])
 def get_resource_info():
@@ -541,32 +243,32 @@ def get_course():
         topic_data = {"topic_name": topic.name, "documents": []}
 
         documents = (
-                db.session.query(models.Document)
-                .filter(models.Document.topic_id == topic.id)
-                .all()
+            db.session.query(models.Document)
+            .filter(models.Document.topic_id == topic.id)
+            .all()
         )
 
         for doc in documents:
-                # Retrieve the similarity score from the 'doc_similarity' table
-                similarity_entry = (
-                    db.session.query(models.DocSimilarity)
-                    .filter(
-                        (models.DocSimilarity.new_document_id == document_id)
-                        & (models.DocSimilarity.existing_document_id == doc.id)
-                    )
-                    .first()
+            # Retrieve the similarity score from the 'doc_similarity' table
+            similarity_entry = (
+                db.session.query(models.DocSimilarity)
+                .filter(
+                    (models.DocSimilarity.new_document_id == document_id)
+                    & (models.DocSimilarity.existing_document_id == doc.id)
                 )
-                similarity_score = (
-                    similarity_entry.similarity_score if similarity_entry else None
-                )
+                .first()
+            )
+            similarity_score = (
+                similarity_entry.similarity_score if similarity_entry else None
+            )
 
-                document_data = {
-                    "document_name": doc.title,
-                    "document_id": doc.id,
-                    "similarity_score": similarity_score,
-                }
+            document_data = {
+                "document_name": doc.title,
+                "document_id": doc.id,
+                "similarity_score": similarity_score,
+            }
 
-                topic_data["documents"].append(document_data)
+            topic_data["documents"].append(document_data)
 
         course_data["topics"].append(topic_data)
 
@@ -625,10 +327,7 @@ def edit_topic():
 
         # Find the corresponding topic id
         topic_id = (
-            db.session.query(models.Topic)
-            .filter(models.Topic.name == topic)
-            .first()
-            .id
+            db.session.query(models.Topic).filter(models.Topic.name == topic).first().id
         )
 
         if not topic_id:
