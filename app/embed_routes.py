@@ -9,8 +9,6 @@ from llama_hub.youtube_transcript import YoutubeTranscriptReader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from llama_index import download_loader
 import whisper
-from keybert import KeyBERT
-from sentence_transformers import SentenceTransformer
 from utils import (
     get_keywords,
     preprocess_text,
@@ -36,14 +34,6 @@ PDFReader = download_loader("PDFReader")
 PptxReader = download_loader("PptxReader")
 DocxReader = download_loader("DocxReader")
 whisper_model = whisper.load_model("small", download_root="../models/whisper")
-
-sentence_model = SentenceTransformer(modelPath)
-kw_model = KeyBERT(model=sentence_model)
-
-# Configure the upload folder
-
-
-ALLOWED_EXTENSIONS = {"mp3", "mp4", "mpeg", "mpga", "m4a", "wav", "webm"}
 
 embed_routes = Blueprint("embed_routes", __name__)
 

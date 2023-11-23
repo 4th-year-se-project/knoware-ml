@@ -18,8 +18,12 @@ if not os.path.exists(app.config["UPLOAD_FOLDER"]):
 
 from app.search_routes import search_routes
 from app.embed_routes import embed_routes
+from app.recommend_routes import recomend_routes
+from app.resource_routes import resource_routes
 
 app.register_blueprint(search_routes)
 app.register_blueprint(embed_routes)
+app.register_blueprint(recomend_routes)
+app.register_blueprint(resource_routes)
 
 from app import models
