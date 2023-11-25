@@ -129,6 +129,15 @@ def embed_youtube():
 
     assign_topic(stored_document)
 
+    user_id = (db.session.query(models.User.id).filter(models.User.username == g.user).first()[0])
+
+    #save owns document
+    owns_document = models.OwnsDocument(
+        user_id=user_id, document_id=stored_document.id
+    )
+    db.session.add(owns_document)
+    db.session.commit()
+
     return "Embeddings saved in the database."
 
 
@@ -190,6 +199,17 @@ def embed_pdf():
         db.session.commit()
 
         assign_topic(stored_document)
+
+        user_id = (db.session.query(models.User.id).filter(models.User.username == g.user).first()[0])
+
+        #save owns document
+        owns_document = models.OwnsDocument(
+            user_id=user_id, document_id=stored_document.id
+        )
+        db.session.add(owns_document)
+        db.session.commit()
+
+        print(user_id)
 
         return "Embeddings saved in the database."
 
@@ -253,6 +273,15 @@ def embed_pptx():
 
         assign_topic(stored_document)
 
+        user_id = (db.session.query(models.User.id).filter(models.User.username == g.user).first()[0])
+
+        #save owns document
+        owns_document = models.OwnsDocument(
+            user_id=user_id, document_id=stored_document.id
+        )
+        db.session.add(owns_document)
+        db.session.commit()
+
         return "Embeddings saved in the database."
 
 
@@ -310,6 +339,15 @@ def embed_audio():
         db.session.commit()
 
         assign_topic(stored_document)
+
+        user_id = (db.session.query(models.User.id).filter(models.User.username == g.user).first()[0])
+
+        #save owns document
+        owns_document = models.OwnsDocument(
+            user_id=user_id, document_id=stored_document.id
+        )
+        db.session.add(owns_document)
+        db.session.commit()
 
         return "Audio embeddings saved in the database."
     else:
@@ -379,6 +417,15 @@ def embed_docx():
         db.session.commit()
 
         assign_topic(stored_document)
+
+        user_id = (db.session.query(models.User.id).filter(models.User.username == g.user).first()[0])
+
+        #save owns document
+        owns_document = models.OwnsDocument(
+            user_id=user_id, document_id=stored_document.id
+        )
+        db.session.add(owns_document)
+        db.session.commit()
 
         return "Embeddings saved in the database."
 
