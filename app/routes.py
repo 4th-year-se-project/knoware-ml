@@ -849,4 +849,7 @@ def get_keywords(docs):
             if len(keyword_set) >= 5:
                 break
 
+        if len(keyword_set) >= 5:
+            break
+
     return list(keyword_set)
