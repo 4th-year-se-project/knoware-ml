@@ -425,7 +425,7 @@ def search():
             }
 
     # Convert the results_dict values to a list
-    response_data = list(results_dict.values())
+    response_data = list(results_dict.values())[:5]
 
     return {"results": response_data}
 
