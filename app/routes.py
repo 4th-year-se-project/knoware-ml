@@ -1,4 +1,5 @@
 import os
+import time
 from app import app, db, models
 from flask import jsonify, request, send_file
 from llama_hub.youtube_transcript import YoutubeTranscriptReader
@@ -73,8 +74,35 @@ def embed_youtube():
     yt = YouTube(video_url)
     title = yt.title
 
-    documents = loader.load_data(ytlinks=[video_url])
-    transcript_text = documents[0].text
+    transcript_text = ""
+    try:
+        documents = loader.load_data(ytlinks=[video_url])
+        transcript_text = documents[0].text
+    except NoTranscriptFound as e:
+        # Handle the case where no transcript is found
+        stream = yt.streams.filter(only_audio=True).first()
+        filename = "audio.mp3"
+        filepath = os.path.join(app.config["UPLOAD_FOLDER"], filename)
+
+        # Download the audio stream
+        stream.download(output_path=app.config["UPLOAD_FOLDER"])
+
+        # Wait for the file to be downloaded
+        while not os.path.exists(
+            os.path.join(app.config["UPLOAD_FOLDER"], stream.default_filename)
+        ):
+            time.sleep(1)
+
+        # Rename the downloaded file to the desired filename
+        os.rename(
+            os.path.join(app.config["UPLOAD_FOLDER"], stream.default_filename),
+            filepath,
+        )
+
+        result = whisper_model.transcribe(filepath)
+        transcript_text = result["text"]
+        os.remove(filepath)
+
     preprocessed_transcript_text = preprocess_text(transcript_text)
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=150)
     docs = text_splitter.split_text(transcript_text)
