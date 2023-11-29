@@ -1,9 +1,10 @@
 from app import db
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import ARRAY, Integer, String, Text, ForeignKey, Float
+from sqlalchemy import ARRAY, Integer, String, Text, ForeignKey, Float, DateTime
 from sqlalchemy.orm import declarative_base, mapped_column, relationship
 from sqlalchemy import create_engine
 from app.config import SQLALCHEMY_DATABASE_URI
+from datetime import datetime 
 
 engine = create_engine(SQLALCHEMY_DATABASE_URI)
 
@@ -15,6 +16,8 @@ class User(Base):
 
     id = mapped_column(Integer, primary_key=True)
     name = mapped_column(String)
+    username = mapped_column(String)
+    password = mapped_column(String)
 
 
 class Course(Base):
@@ -58,6 +61,7 @@ class Document(Base):
     topic = relationship("Topic", back_populates="children")
     keywords = mapped_column(ARRAY(String))
     ratings = mapped_column(Float, default=5)
+    date_created = mapped_column(DateTime, default=datetime.utcnow)
 
 
 class OwnsDocument(Base):
@@ -88,6 +92,16 @@ class Embeddings(Base):
     split_content = mapped_column(Text)
     embedding = mapped_column(Vector(384))
     document_id = mapped_column(ForeignKey("document.id", ondelete="CASCADE"))
+
+class QueryLog(Base):
+    __tablename__ = "query_logs"
+
+    id = mapped_column(Integer, primary_key=True)
+    query = mapped_column(Text)
+    user_id = mapped_column(ForeignKey("user.id"))
+    doc_ids = mapped_column(ARRAY(Integer))
+    timestamp = mapped_column(DateTime, default=datetime.utcnow)
+    user = relationship("User")
 
 
 Base.metadata.create_all(engine)
