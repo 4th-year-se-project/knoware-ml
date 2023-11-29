@@ -458,11 +458,13 @@ def search():
         models.Embeddings.embedding.cosine_distance(query_embedding)
     )
 
+    doc_ids = []
     for result in results:
         embedding, document, course, topic = result
         doc_id = document.id
         # Check if this document ID is already in the results_dict
         if doc_id not in results_dict:
+            doc_ids.append(doc_id)
             results_dict[doc_id] = {
                 "title": document.title,
                 "content": embedding.split_content,
@@ -474,6 +476,11 @@ def search():
 
     # Convert the results_dict values to a list
     response_data = list(results_dict.values())
+
+    user_id = (db.session.query(models.User.id).filter(models.User.username == g.user).first()[0])
+    query_log_entry = models.QueryLog(query=query, user_id=user_id, doc_ids=doc_ids)
+    db.session.add(query_log_entry)
+    db.session.commit()
 
     return {"results": response_data}, 200
 
@@ -895,15 +902,16 @@ def login():
         return jsonify({"message": "Invalid username or password"}), 401
 
 
-@app.route('/register')
-def index():
-    id=15
-    name = "Perera"
-    password = sha256_crypt.encrypt("Perera123")
-    email = "perera@gmail.com"
+@app.route('/register', methods=["POST"])
+def register():
+    data = request.json
+    name = data.get("name")
+    email = data.get("email")
+    password = data.get("password")
 
+    encrypted_passwored = sha256_crypt.encrypt(password)
     new_user = models.User(
-        id=id, name=name, username=email, password=password
+        name=name, username=email, password=encrypted_passwored
     )
     db.session.add(new_user)
     db.session.commit()
