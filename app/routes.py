@@ -1,7 +1,8 @@
+from functools import wraps
 import os
 import time
 from app import app, db, models
-from flask import jsonify, request, send_file
+from flask import jsonify, request, send_file, g
 from llama_hub.youtube_transcript import YoutubeTranscriptReader
 from youtube_transcript_api._errors import (
     NoTranscriptFound,
@@ -25,6 +26,9 @@ from keybert import KeyBERT
 from sentence_transformers import SentenceTransformer
 from pytube import YouTube
 import logging
+from passlib.hash import sha256_crypt
+import jwt
+from datetime import datetime, timedelta
 
 modelPath = "../models/all-MiniLM-L6-v2"
 model_kwargs = {"device": "cpu"}
@@ -57,8 +61,32 @@ def allowed_file(filename):
 # Path to the directory containing the uploaded files
 pdf_directory = os.path.join(os.getcwd(), app.config["UPLOAD_FOLDER"])
 
+def token_required(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        token = None
+
+        if 'Authorization' in request.headers:
+            auth_header = request.headers['Authorization']
+            token = auth_header.split(" ")[1] if auth_header.startswith("Bearer ") else None
+
+        if not token:
+            return jsonify({"message": "Token is missing"}), 401
+
+        try:
+            data = jwt.decode(token, app.config['SECRET_KEY'], algorithms=['HS256'])
+            g.user = data['identity']  # Store the user identity in Flask's context 'g'
+        except jwt.ExpiredSignatureError:
+            return jsonify({"message": "Token has expired"}), 401
+        except jwt.InvalidTokenError:
+            return jsonify({"message": "Invalid token"}), 401
+
+        return f(*args, **kwargs)
+
+    return decorated
 
 @app.route("/getPdf", methods=["GET"])
+@token_required
 def serve_pdf():
     filename = request.args.get("filename")
     pdf_file_path = os.path.join(pdf_directory, filename)
@@ -66,6 +94,7 @@ def serve_pdf():
 
 
 @app.route("/embed_youtube", methods=["POST"])
+@token_required
 def embed_youtube():
     loader = YoutubeTranscriptReader()
     data = request.json
@@ -135,10 +164,20 @@ def embed_youtube():
 
     assign_topic(stored_document)
 
+    user_id = (db.session.query(models.User.id).filter(models.User.username == g.user).first()[0])
+
+    #save owns document
+    owns_document = models.OwnsDocument(
+        user_id=user_id, document_id=stored_document.id
+    )
+    db.session.add(owns_document)
+    db.session.commit()
+
     return "Embeddings saved in the database."
 
 
 @app.route("/embed_pdf", methods=["POST"])
+@token_required
 def embed_pdf():
     loader = PDFReader()
     # Check if the post request has the file part
@@ -196,10 +235,22 @@ def embed_pdf():
 
         assign_topic(stored_document)
 
+        user_id = (db.session.query(models.User.id).filter(models.User.username == g.user).first()[0])
+
+        #save owns document
+        owns_document = models.OwnsDocument(
+            user_id=user_id, document_id=stored_document.id
+        )
+        db.session.add(owns_document)
+        db.session.commit()
+
+        print(user_id)
+
         return "Embeddings saved in the database."
 
 
 @app.route("/embed_pptx", methods=["POST"])
+@token_required
 def embed_pptx():
     loader = PptxReader()
     # Check if the post request has the file part
@@ -257,10 +308,20 @@ def embed_pptx():
 
         assign_topic(stored_document)
 
+        user_id = (db.session.query(models.User.id).filter(models.User.username == g.user).first()[0])
+
+        #save owns document
+        owns_document = models.OwnsDocument(
+            user_id=user_id, document_id=stored_document.id
+        )
+        db.session.add(owns_document)
+        db.session.commit()
+
         return "Embeddings saved in the database."
 
 
 @app.route("/embed_audio", methods=["POST"])
+@token_required
 def embed_audio():
     # Check if the post request has the audio file part
     if "file" not in request.files:
@@ -314,12 +375,22 @@ def embed_audio():
 
         assign_topic(stored_document)
 
+        user_id = (db.session.query(models.User.id).filter(models.User.username == g.user).first()[0])
+
+        #save owns document
+        owns_document = models.OwnsDocument(
+            user_id=user_id, document_id=stored_document.id
+        )
+        db.session.add(owns_document)
+        db.session.commit()
+
         return "Audio embeddings saved in the database."
     else:
         return "Invalid audio file format. Allowed extensions: mp3, mp4, mpeg, mpga, m4a, wav, webm"
 
 
 @app.route("/embed_docx", methods=["POST"])
+@token_required
 def embed_docx():
     loader = DocxReader()
     # Check if the post request has the file part
@@ -382,10 +453,20 @@ def embed_docx():
 
         assign_topic(stored_document)
 
+        user_id = (db.session.query(models.User.id).filter(models.User.username == g.user).first()[0])
+
+        #save owns document
+        owns_document = models.OwnsDocument(
+            user_id=user_id, document_id=stored_document.id
+        )
+        db.session.add(owns_document)
+        db.session.commit()
+
         return "Embeddings saved in the database."
 
 
 @app.route("/search", methods=["POST"])
+@token_required
 def search():
     data = request.json
     query = data.get("query")
@@ -410,11 +491,13 @@ def search():
         models.Embeddings.embedding.cosine_distance(query_embedding)
     )
 
+    doc_ids = []
     for result in results:
         embedding, document, course, topic = result
         doc_id = document.id
         # Check if this document ID is already in the results_dict
         if doc_id not in results_dict:
+            doc_ids.append(doc_id)
             results_dict[doc_id] = {
                 "title": document.title,
                 "content": embedding.split_content,
@@ -427,10 +510,16 @@ def search():
     # Convert the results_dict values to a list
     response_data = list(results_dict.values())[:5]
 
-    return {"results": response_data}
+    user_id = (db.session.query(models.User.id).filter(models.User.username == g.user).first()[0])
+    query_log_entry = models.QueryLog(query=query, user_id=user_id, doc_ids=doc_ids)
+    db.session.add(query_log_entry)
+    db.session.commit()
+
+    return {"results": response_data}, 200
 
 
 @app.route("/recommend", methods=["POST"])
+@token_required
 def search_similar_resource():
     data = request.json
     doc_id = data.get("document_id")
@@ -536,6 +625,7 @@ def search_similar_resource():
 
 
 @app.route("/resource-info", methods=["GET"])
+@token_required
 def get_resource_info():
     document_id = request.args.get("document_id")
     query = request.args.get("query")
@@ -594,6 +684,7 @@ def get_resource_info():
 
 
 @app.route("/course", methods=["GET"])
+@token_required
 def get_course():
     document_id = request.args.get("document_id")
 
@@ -665,6 +756,7 @@ def get_course():
 
 # Create a route to handle the DELETE request
 @app.route("/resource", methods=["DELETE"])
+@token_required
 def delete_resource():
     try:
         # Get the 'document_id' from the request's query parameters
@@ -696,6 +788,7 @@ def delete_resource():
 
 
 @app.route("/topic", methods=["PUT"])
+@token_required
 def edit_topic():
     try:
         # Get the 'document_id' and 'topic' from the request's query parameters
@@ -853,3 +946,48 @@ def get_keywords(docs):
             break
 
     return list(keyword_set)
+
+def authenticate(username, password):
+    user = {}
+    user['username'] = username
+    user['password'] = db.session.query(models.User.password).filter(models.User.username == username).first()[0]
+    user['name'] = db.session.query(models.User.name).filter(models.User.username == username).first()[0]
+
+    if sha256_crypt.verify(password, user['password']):
+        return user
+
+
+@app.route('/login', methods=['POST'])
+def login():
+    data = request.json
+    if not data or 'username' not in data or 'password' not in data:
+        return jsonify({"message": "Missing username or password"}), 400
+
+    username = data['username']
+    password = data['password']
+
+    user = authenticate(username, password)
+
+    if user:
+        token = jwt.encode({'identity': user['username'], 'exp': datetime.utcnow() + timedelta(hours=1)}, app.config['SECRET_KEY'], algorithm='HS256')
+        return jsonify({"access_token": token, "name": user["name"]}), 200
+    else:
+        return jsonify({"message": "Invalid username or password"}), 401
+
+
+@app.route('/register', methods=["POST"])
+def register():
+    data = request.json
+    name = data.get("name")
+    email = data.get("email")
+    password = data.get("password")
+
+    encrypted_passwored = sha256_crypt.encrypt(password)
+    new_user = models.User(
+        name=name, username=email, password=encrypted_passwored
+    )
+    db.session.add(new_user)
+    db.session.commit()
+
+    return "New user added"
+  
