@@ -877,7 +877,7 @@ def authenticate(username, password):
     user = {}
     user['username'] = username
     user['password'] = db.session.query(models.User.password).filter(models.User.username == username).first()[0]
-
+    user['name'] = db.session.query(models.User.name).filter(models.User.username == username).first()[0]
 
     if sha256_crypt.verify(password, user['password']):
         return user
@@ -896,8 +896,7 @@ def login():
 
     if user:
         token = jwt.encode({'identity': user['username'], 'exp': datetime.utcnow() + timedelta(hours=1)}, app.config['SECRET_KEY'], algorithm='HS256')
-        print(token)
-        return jsonify({"access_token": token}), 200
+        return jsonify({"access_token": token, "name": user["name"]}), 200
     else:
         return jsonify({"message": "Invalid username or password"}), 401
 
