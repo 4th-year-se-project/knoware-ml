@@ -1,8 +1,12 @@
 from functools import wraps
 import os
+import time
 from app import app, db, models
 from flask import jsonify, request, send_file, g
 from llama_hub.youtube_transcript import YoutubeTranscriptReader
+from youtube_transcript_api._errors import (
+    NoTranscriptFound,
+)
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.embeddings import HuggingFaceEmbeddings
 from werkzeug.utils import secure_filename
@@ -53,6 +57,7 @@ ALLOWED_EXTENSIONS = {"mp3", "mp4", "mpeg", "mpga", "m4a", "wav", "webm"}
 def allowed_file(filename):
     return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
 
+
 # Path to the directory containing the uploaded files
 pdf_directory = os.path.join(os.getcwd(), app.config["UPLOAD_FOLDER"])
 
@@ -80,13 +85,13 @@ def token_required(f):
 
     return decorated
 
-
 @app.route("/getPdf", methods=["GET"])
 @token_required
 def serve_pdf():
     filename = request.args.get("filename")
-    pdf_file_path = os.path.join(pdf_directory, filename) 
-    return send_file(pdf_file_path, as_attachment=True, mimetype='application/pdf')
+    pdf_file_path = os.path.join(pdf_directory, filename)
+    return send_file(pdf_file_path, as_attachment=True, mimetype="application/pdf")
+
 
 @app.route("/embed_youtube", methods=["POST"])
 @token_required
@@ -98,15 +103,45 @@ def embed_youtube():
     yt = YouTube(video_url)
     title = yt.title
 
-    documents = loader.load_data(ytlinks=[video_url])
-    transcript_text = documents[0].text
+    transcript_text = ""
+    try:
+        documents = loader.load_data(ytlinks=[video_url])
+        transcript_text = documents[0].text
+    except NoTranscriptFound as e:
+        # Handle the case where no transcript is found
+        stream = yt.streams.filter(only_audio=True).first()
+        filename = "audio.mp3"
+        filepath = os.path.join(app.config["UPLOAD_FOLDER"], filename)
+
+        # Download the audio stream
+        stream.download(output_path=app.config["UPLOAD_FOLDER"])
+
+        # Wait for the file to be downloaded
+        while not os.path.exists(
+            os.path.join(app.config["UPLOAD_FOLDER"], stream.default_filename)
+        ):
+            time.sleep(1)
+
+        # Rename the downloaded file to the desired filename
+        os.rename(
+            os.path.join(app.config["UPLOAD_FOLDER"], stream.default_filename),
+            filepath,
+        )
+
+        result = whisper_model.transcribe(filepath)
+        transcript_text = result["text"]
+        os.remove(filepath)
+
     preprocessed_transcript_text = preprocess_text(transcript_text)
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=150)
     docs = text_splitter.split_text(transcript_text)
     embeddings = embeddings_model.embed_documents(docs)
     keywords = get_keywords(docs)
     stored_document = models.Document(
-        title=title, content=preprocessed_transcript_text, keywords=keywords, link=video_url
+        title=title,
+        content=preprocessed_transcript_text,
+        keywords=keywords,
+        link=video_url,
     )
     db.session.add(stored_document)
     db.session.commit()
@@ -448,9 +483,7 @@ def search():
     results = results.join(
         models.Document, models.Embeddings.document_id == models.Document.id
     )
-    results = results.join(
-        models.Topic, models.Document.topic_id == models.Topic.id
-    )
+    results = results.join(models.Topic, models.Document.topic_id == models.Topic.id)
     results = results.join(models.Course, models.Topic.course_id == models.Course.id)
 
     # Calculate and order by cosine distance
@@ -471,11 +504,11 @@ def search():
                 "doc_id": doc_id,
                 "keywords": document.keywords,
                 "course": course.name,
-                "topic": topic.name
+                "topic": topic.name,
             }
 
     # Convert the results_dict values to a list
-    response_data = list(results_dict.values())
+    response_data = list(results_dict.values())[:5]
 
     user_id = (db.session.query(models.User.id).filter(models.User.username == g.user).first()[0])
     query_log_entry = models.QueryLog(query=query, user_id=user_id, doc_ids=doc_ids)
@@ -492,17 +525,29 @@ def search_similar_resource():
     doc_id = data.get("document_id")
     user_id = data.get("user_id")
 
-    topic_id = (db.session.query(models.Document.topic_id).filter(models.Document.id == doc_id).first())[0]
-    course_id = (db.session.query(models.Topic.course_id).filter(models.Topic.id == topic_id).first())[0]
+    topic_id = (
+        db.session.query(models.Document.topic_id)
+        .filter(models.Document.id == doc_id)
+        .first()
+    )[0]
+    course_id = (
+        db.session.query(models.Topic.course_id)
+        .filter(models.Topic.id == topic_id)
+        .first()
+    )[0]
 
-    similar_topic_ids = (db.session.query(models.Topic.id).filter(models.Topic.course_id == course_id).all())
+    similar_topic_ids = (
+        db.session.query(models.Topic.id)
+        .filter(models.Topic.course_id == course_id)
+        .all()
+    )
     similar_topic_ids = [topic_id for (topic_id,) in similar_topic_ids]
 
     similar_topic_docs = (
         db.session.query(models.Document.id)
         .filter(
             models.Document.topic_id.in_(similar_topic_ids),
-            models.Document.id != doc_id
+            models.Document.id != doc_id,
         )
         .all()
     )
@@ -513,7 +558,8 @@ def search_similar_resource():
         .filter(
             models.DocSimilarity.existing_document_id.in_(similar_topic_docs),
             models.DocSimilarity.new_document_id == doc_id,
-            models.DocSimilarity.existing_document_id != models.DocSimilarity.new_document_id,
+            models.DocSimilarity.existing_document_id
+            != models.DocSimilarity.new_document_id,
         )
         .order_by(models.DocSimilarity.similarity_score.desc())
         .all()
@@ -523,31 +569,60 @@ def search_similar_resource():
 
     response_dict = []
     for count, result in enumerate(doc_results):
-        document_owners = [owner_id[0] for owner_id in db.session.query(models.OwnsDocument.user_id).filter(models.OwnsDocument.document_id == result.existing_document_id).all()]
-        
+        document_owners = [
+            owner_id[0]
+            for owner_id in db.session.query(models.OwnsDocument.user_id)
+            .filter(models.OwnsDocument.document_id == result.existing_document_id)
+            .all()
+        ]
+
         if user_id in document_owners:
             continue
-        
-        user_count = (db.session.query(models.OwnsDocument).filter(models.OwnsDocument.document_id == result.existing_document_id).count())
-        recommending_doc_ratings = (db.session.query( models.Document.ratings).filter(models.Document.id == result.existing_document_id).scalar())
-        recommending_doc_title = (db.session.query(models.Document.title).filter(models.Document.id == result.existing_document_id).scalar())
-        resource_topic = (db.session.query(models.Topic).filter(models.Topic.id == models.Document.topic_id, models.Document.id == result.existing_document_id).first())       
-        response_dict.append({
-            "document_id": result.existing_document_id,
-            "document_title": recommending_doc_title,
-            "topic_id": resource_topic.id,
-            "topic_name": resource_topic.name,
-            "ratings": recommending_doc_ratings,
-            "similarity_score": result.similarity_score,
-            "user_count": user_count,
-            "similarity_weight": (user_count / all_users) * result.similarity_score * (recommending_doc_ratings / 5)
-        })
 
-        if len(response_dict) == 5: 
+        user_count = (
+            db.session.query(models.OwnsDocument)
+            .filter(models.OwnsDocument.document_id == result.existing_document_id)
+            .count()
+        )
+        recommending_doc_ratings = (
+            db.session.query(models.Document.ratings)
+            .filter(models.Document.id == result.existing_document_id)
+            .scalar()
+        )
+        recommending_doc_title = (
+            db.session.query(models.Document.title)
+            .filter(models.Document.id == result.existing_document_id)
+            .scalar()
+        )
+        resource_topic = (
+            db.session.query(models.Topic)
+            .filter(
+                models.Topic.id == models.Document.topic_id,
+                models.Document.id == result.existing_document_id,
+            )
+            .first()
+        )
+        response_dict.append(
+            {
+                "document_id": result.existing_document_id,
+                "document_title": recommending_doc_title,
+                "topic_id": resource_topic.id,
+                "topic_name": resource_topic.name,
+                "ratings": recommending_doc_ratings,
+                "similarity_score": result.similarity_score,
+                "user_count": user_count,
+                "similarity_weight": (user_count / all_users)
+                * result.similarity_score
+                * (recommending_doc_ratings / 5),
+            }
+        )
+
+        if len(response_dict) == 5:
             print("Breaking the loop at count =", count)
             break
 
     return {"results": response_dict}
+
 
 @app.route("/resource-info", methods=["GET"])
 @token_required
@@ -733,10 +808,7 @@ def edit_topic():
 
         # Find the corresponding topic id
         topic_id = (
-            db.session.query(models.Topic)
-            .filter(models.Topic.name == topic)
-            .first()
-            .id
+            db.session.query(models.Topic).filter(models.Topic.name == topic).first().id
         )
 
         if not topic_id:
@@ -870,8 +942,10 @@ def get_keywords(docs):
             if len(keyword_set) >= 5:
                 break
 
-    return list(keyword_set)
+        if len(keyword_set) >= 5:
+            break
 
+    return list(keyword_set)
 
 def authenticate(username, password):
     user = {}
@@ -916,3 +990,4 @@ def register():
     db.session.commit()
 
     return "New user added"
+  
