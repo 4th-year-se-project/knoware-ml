@@ -564,6 +564,7 @@ def search_similar_resource():
         .filter(
             models.Document.topic_id.in_(similar_topic_ids),
             models.Document.id != doc_id,
+            models.Document.deleted == False
         )
         .all()
     )
@@ -739,7 +740,7 @@ def get_course():
 
         documents = (
             db.session.query(models.Document)
-            .filter(models.Document.topic_id == topic.id)
+            .filter(models.Document.topic_id == topic.id, models.Document.deleted == False)
             .all()
         )
 
