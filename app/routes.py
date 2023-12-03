@@ -45,21 +45,11 @@ whisper_model = whisper.load_model("small", download_root="../models/whisper")
 sentence_model = SentenceTransformer(modelPath)
 kw_model = KeyBERT(model=sentence_model)
 
-
-# Configure the upload folder
-app.config["UPLOAD_FOLDER"] = "uploads"
-if not os.path.exists(app.config["UPLOAD_FOLDER"]):
-    os.makedirs(app.config["UPLOAD_FOLDER"])
-
 ALLOWED_EXTENSIONS = {"mp3", "mp4", "mpeg", "mpga", "m4a", "wav", "webm"}
 
 
 def allowed_file(filename):
     return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
-
-
-# Path to the directory containing the uploaded files
-pdf_directory = os.path.join(os.getcwd(), app.config["UPLOAD_FOLDER"])
 
 def token_required(f):
     @wraps(f)
@@ -89,7 +79,12 @@ def token_required(f):
 @token_required
 def serve_pdf():
     filename = request.args.get("filename")
+
+    user_id = (db.session.query(models.User.id).filter(models.User.username == g.user).first()[0])
+    uploaded_dir = os.path.join("uploads", str(user_id))
+    pdf_directory = os.path.join(os.getcwd(), uploaded_dir)
     pdf_file_path = os.path.join(pdf_directory, filename)
+
     return send_file(pdf_file_path, as_attachment=True, mimetype="application/pdf")
 
 
@@ -97,6 +92,9 @@ def serve_pdf():
 @token_required
 def embed_youtube():
     loader = YoutubeTranscriptReader()
+    user_id = (db.session.query(models.User.id).filter(models.User.username == g.user).first()[0])
+    upload_dir = os.path.join("uploads", str(user_id))
+    os.makedirs(upload_dir, exist_ok=True)
     data = request.json
 
     video_url = data.get("video_url")
@@ -111,20 +109,20 @@ def embed_youtube():
         # Handle the case where no transcript is found
         stream = yt.streams.filter(only_audio=True).first()
         filename = "audio.mp3"
-        filepath = os.path.join(app.config["UPLOAD_FOLDER"], filename)
+        filepath = os.path.join(upload_dir, filename)
 
         # Download the audio stream
-        stream.download(output_path=app.config["UPLOAD_FOLDER"])
+        stream.download(output_path=upload_dir)
 
         # Wait for the file to be downloaded
         while not os.path.exists(
-            os.path.join(app.config["UPLOAD_FOLDER"], stream.default_filename)
+            os.path.join(upload_dir, stream.default_filename)
         ):
             time.sleep(1)
 
         # Rename the downloaded file to the desired filename
         os.rename(
-            os.path.join(app.config["UPLOAD_FOLDER"], stream.default_filename),
+            os.path.join(upload_dir, stream.default_filename),
             filepath,
         )
 
@@ -180,6 +178,9 @@ def embed_youtube():
 @token_required
 def embed_pdf():
     loader = PDFReader()
+    user_id = (db.session.query(models.User.id).filter(models.User.username == g.user).first()[0])
+    upload_dir = os.path.join("uploads", str(user_id))
+    os.makedirs(upload_dir, exist_ok=True)
     # Check if the post request has the file part
     if "file" not in request.files:
         return "No file part"
@@ -193,7 +194,7 @@ def embed_pdf():
     if file:
         # Securely save the uploaded file
         filename = secure_filename(file.filename)
-        filepath = os.path.join(app.config["UPLOAD_FOLDER"], filename)
+        filepath = os.path.join(upload_dir, filename)
         file.save(filepath)
 
         # Load and process the PDF content
@@ -253,6 +254,9 @@ def embed_pdf():
 @token_required
 def embed_pptx():
     loader = PptxReader()
+    user_id = (db.session.query(models.User.id).filter(models.User.username == g.user).first()[0])
+    upload_dir = os.path.join("uploads", str(user_id))
+    os.makedirs(upload_dir, exist_ok=True)
     # Check if the post request has the file part
     if "file" not in request.files:
         return "No file part"
@@ -266,7 +270,7 @@ def embed_pptx():
     if file:
         # Securely save the uploaded file
         filename = secure_filename(file.filename)
-        filepath = os.path.join(app.config["UPLOAD_FOLDER"], filename)
+        filepath = os.path.join(upload_dir, filename)
         file.save(filepath)
 
         # Load and process the PDF content
@@ -308,7 +312,7 @@ def embed_pptx():
 
         assign_topic(stored_document)
 
-        user_id = (db.session.query(models.User.id).filter(models.User.username == g.user).first()[0])
+        #user_id = (db.session.query(models.User.id).filter(models.User.username == g.user).first()[0])
 
         #save owns document
         owns_document = models.OwnsDocument(
@@ -323,6 +327,9 @@ def embed_pptx():
 @app.route("/embed_audio", methods=["POST"])
 @token_required
 def embed_audio():
+    user_id = (db.session.query(models.User.id).filter(models.User.username == g.user).first()[0])
+    upload_dir = os.path.join("uploads", str(user_id))
+    os.makedirs(upload_dir, exist_ok=True)
     # Check if the post request has the audio file part
     if "file" not in request.files:
         return "No audio file part"
@@ -336,7 +343,7 @@ def embed_audio():
     if audio_file and allowed_file(audio_file.filename):
         # Securely save the uploaded audio file
         filename = secure_filename(audio_file.filename)
-        filepath = os.path.join(app.config["UPLOAD_FOLDER"], filename)
+        filepath = os.path.join(upload_dir, filename)
         audio_file.save(filepath)
 
         # Load and process the audio content
@@ -393,6 +400,9 @@ def embed_audio():
 @token_required
 def embed_docx():
     loader = DocxReader()
+    user_id = (db.session.query(models.User.id).filter(models.User.username == g.user).first()[0])
+    upload_dir = os.path.join("uploads", str(user_id))
+    os.makedirs(upload_dir, exist_ok=True)
     # Check if the post request has the file part
     if "file" not in request.files:
         return "No file part"
@@ -406,7 +416,7 @@ def embed_docx():
     if file:
         # Securely save the uploaded file
         filename = secure_filename(file.filename)
-        filepath = os.path.join(app.config["UPLOAD_FOLDER"], filename)
+        filepath = os.path.join(upload_dir, filename)
         file.save(filepath)
 
         # Load and process the docx content
@@ -471,12 +481,12 @@ def search():
     data = request.json
     query = data.get("query")
     query_embedding = embeddings_model.embed_query(query)
+    user_id = (db.session.query(models.User.id).filter(models.User.username == g.user).first()[0])
 
     # Create a dictionary to store the results, indexed by document ID
     results_dict = {}
 
     # Perform a join between Embeddings, Document, Topic, and Course tables
-
     results = db.session.query(
         models.Embeddings, models.Document, models.Topic, models.Course
     )
@@ -485,6 +495,13 @@ def search():
     )
     results = results.join(models.Topic, models.Document.topic_id == models.Topic.id)
     results = results.join(models.Course, models.Topic.course_id == models.Course.id)
+    results = results.join(models.OwnsDocument, models.OwnsDocument.document_id == models.Document.id)
+
+    # Filter by user_id
+    results = results.filter(
+        models.OwnsDocument.user_id == user_id,
+        models.Document.deleted == False
+    )
 
     # Calculate and order by cosine distance
     results = results.order_by(
@@ -510,7 +527,6 @@ def search():
     # Convert the results_dict values to a list
     response_data = list(results_dict.values())[:5]
 
-    user_id = (db.session.query(models.User.id).filter(models.User.username == g.user).first()[0])
     query_log_entry = models.QueryLog(query=query, user_id=user_id, doc_ids=doc_ids)
     db.session.add(query_log_entry)
     db.session.commit()
@@ -773,7 +789,7 @@ def delete_resource():
             return jsonify({"error": "Document not found"}), 404
 
         # Delete the document from the database
-        db.session.delete(document)
+        document.deleted = True
         db.session.commit()
 
         # Assuming a successful deletion, return a success message
