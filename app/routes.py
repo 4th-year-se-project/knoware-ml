@@ -704,6 +704,7 @@ def get_resource_info():
 @token_required
 def get_course():
     document_id = request.args.get("document_id")
+    user_id = (db.session.query(models.User.id).filter(models.User.username == g.user).first()[0])
 
     # Find the document with the given document_id
     document = (
@@ -740,7 +741,12 @@ def get_course():
 
         documents = (
             db.session.query(models.Document)
-            .filter(models.Document.topic_id == topic.id, models.Document.deleted == False)
+            .join(models.OwnsDocument, models.Document.id == models.OwnsDocument.document_id)
+            .filter(
+                models.Document.topic_id == topic.id,
+                models.Document.deleted == False,
+                models.OwnsDocument.user_id == user_id
+            )
             .all()
         )
 
