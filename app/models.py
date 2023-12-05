@@ -1,6 +1,6 @@
 from app import db
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import ARRAY, Integer, String, Text, ForeignKey, Float, DateTime
+from sqlalchemy import ARRAY, Integer, String, Text, ForeignKey, Float, DateTime, Boolean
 from sqlalchemy.orm import declarative_base, mapped_column, relationship
 from sqlalchemy import create_engine
 from app.config import SQLALCHEMY_DATABASE_URI
@@ -62,6 +62,7 @@ class Document(Base):
     keywords = mapped_column(ARRAY(String))
     ratings = mapped_column(Float, default=5)
     date_created = mapped_column(DateTime, default=datetime.utcnow)
+    deleted = mapped_column(Boolean, default=False)
 
 
 class OwnsDocument(Base):
