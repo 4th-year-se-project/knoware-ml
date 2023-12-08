@@ -38,8 +38,8 @@ try:
         session.add(course)
 
         # Iterate through the topics within each course and create Topics with Subtopics as children
-        for topic_data in course_info["topics"]:
-            topic = Topic(name=topic_data["name"])
+        for topic_name in course_info["topics"]:
+            topic = Topic(name=topic_name)
             course.children.append(topic)
 
             session.add(topic)
