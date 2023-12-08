@@ -1,7 +1,12 @@
+from functools import wraps
 import os
+import time
 from app import app, db, models
-from flask import jsonify, request, send_file
+from flask import jsonify, request, send_file, g
 from llama_hub.youtube_transcript import YoutubeTranscriptReader
+from youtube_transcript_api._errors import (
+    NoTranscriptFound,
+)
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.embeddings import HuggingFaceEmbeddings
 from werkzeug.utils import secure_filename
@@ -21,6 +26,9 @@ from keybert import KeyBERT
 from sentence_transformers import SentenceTransformer
 from pytube import YouTube
 import logging
+from passlib.hash import sha256_crypt
+import jwt
+from datetime import datetime, timedelta
 
 modelPath = "../models/all-MiniLM-L6-v2"
 model_kwargs = {"device": "cpu"}
@@ -37,45 +45,102 @@ whisper_model = whisper.load_model("small", download_root="../models/whisper")
 sentence_model = SentenceTransformer(modelPath)
 kw_model = KeyBERT(model=sentence_model)
 
-
-# Configure the upload folder
-app.config["UPLOAD_FOLDER"] = "uploads"
-if not os.path.exists(app.config["UPLOAD_FOLDER"]):
-    os.makedirs(app.config["UPLOAD_FOLDER"])
-
 ALLOWED_EXTENSIONS = {"mp3", "mp4", "mpeg", "mpga", "m4a", "wav", "webm"}
 
 
 def allowed_file(filename):
     return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
 
-# Path to the directory containing the uploaded files
-pdf_directory = os.path.join(os.getcwd(), app.config["UPLOAD_FOLDER"])
+def token_required(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        token = None
+
+        if 'Authorization' in request.headers:
+            auth_header = request.headers['Authorization']
+            token = auth_header.split(" ")[1] if auth_header.startswith("Bearer ") else None
+
+        if not token:
+            return jsonify({"message": "Token is missing"}), 401
+
+        try:
+            data = jwt.decode(token, app.config['SECRET_KEY'], algorithms=['HS256'])
+            g.user = data['identity']  # Store the user identity in Flask's context 'g'
+        except jwt.ExpiredSignatureError:
+            return jsonify({"message": "Token has expired"}), 401
+        except jwt.InvalidTokenError:
+            return jsonify({"message": "Invalid token"}), 401
+
+        return f(*args, **kwargs)
+
+    return decorated
+
 
 @app.route("/getPdf", methods=["GET","OPTIONS"])
+@token_required
 def serve_pdf():
     filename = request.args.get("filename")
-    pdf_file_path = os.path.join(pdf_directory, filename) 
-    return send_file(pdf_file_path, as_attachment=True, mimetype='application/pdf')
 
-@app.route("/embed_youtube", methods=["POST","OPTIONS"])
+    user_id = (db.session.query(models.User.id).filter(models.User.username == g.user).first()[0])
+    uploaded_dir = os.path.join("uploads", str(user_id))
+    pdf_directory = os.path.join(os.getcwd(), uploaded_dir)
+    pdf_file_path = os.path.join(pdf_directory, filename)
+
+    return send_file(pdf_file_path, as_attachment=True, mimetype="application/pdf")
+
+
+@app.route("/embed_youtube", methods=["POST"])
+@token_required
 def embed_youtube():
     loader = YoutubeTranscriptReader()
+    user_id = (db.session.query(models.User.id).filter(models.User.username == g.user).first()[0])
+    upload_dir = os.path.join("uploads", str(user_id))
+    os.makedirs(upload_dir, exist_ok=True)
     data = request.json
 
     video_url = data.get("video_url")
     yt = YouTube(video_url)
     title = yt.title
 
-    documents = loader.load_data(ytlinks=[video_url])
-    transcript_text = documents[0].text
+    transcript_text = ""
+    try:
+        documents = loader.load_data(ytlinks=[video_url])
+        transcript_text = documents[0].text
+    except NoTranscriptFound as e:
+        # Handle the case where no transcript is found
+        stream = yt.streams.filter(only_audio=True).first()
+        filename = "audio.mp3"
+        filepath = os.path.join(upload_dir, filename)
+
+        # Download the audio stream
+        stream.download(output_path=upload_dir)
+
+        # Wait for the file to be downloaded
+        while not os.path.exists(
+            os.path.join(upload_dir, stream.default_filename)
+        ):
+            time.sleep(1)
+
+        # Rename the downloaded file to the desired filename
+        os.rename(
+            os.path.join(upload_dir, stream.default_filename),
+            filepath,
+        )
+
+        result = whisper_model.transcribe(filepath)
+        transcript_text = result["text"]
+        os.remove(filepath)
+
     preprocessed_transcript_text = preprocess_text(transcript_text)
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=150)
     docs = text_splitter.split_text(transcript_text)
     embeddings = embeddings_model.embed_documents(docs)
     keywords = get_keywords(docs)
     stored_document = models.Document(
-        title=title, content=preprocessed_transcript_text, keywords=keywords, link=video_url
+        title=title,
+        content=preprocessed_transcript_text,
+        keywords=keywords,
+        link=video_url,
     )
     db.session.add(stored_document)
     db.session.commit()
@@ -98,12 +163,25 @@ def embed_youtube():
 
     assign_topic(stored_document)
 
+    user_id = (db.session.query(models.User.id).filter(models.User.username == g.user).first()[0])
+
+    #save owns document
+    owns_document = models.OwnsDocument(
+        user_id=user_id, document_id=stored_document.id
+    )
+    db.session.add(owns_document)
+    db.session.commit()
+
     return "Embeddings saved in the database."
 
 
 @app.route("/embed_pdf", methods=["POST","OPTIONS"])
+@token_required
 def embed_pdf():
     loader = PDFReader()
+    user_id = (db.session.query(models.User.id).filter(models.User.username == g.user).first()[0])
+    upload_dir = os.path.join("uploads", str(user_id))
+    os.makedirs(upload_dir, exist_ok=True)
     # Check if the post request has the file part
     if "file" not in request.files:
         return "No file part"
@@ -117,7 +195,7 @@ def embed_pdf():
     if file:
         # Securely save the uploaded file
         filename = secure_filename(file.filename)
-        filepath = os.path.join(app.config["UPLOAD_FOLDER"], filename)
+        filepath = os.path.join(upload_dir, filename)
         file.save(filepath)
 
         # Load and process the PDF content
@@ -159,12 +237,27 @@ def embed_pdf():
 
         assign_topic(stored_document)
 
+        user_id = (db.session.query(models.User.id).filter(models.User.username == g.user).first()[0])
+
+        #save owns document
+        owns_document = models.OwnsDocument(
+            user_id=user_id, document_id=stored_document.id
+        )
+        db.session.add(owns_document)
+        db.session.commit()
+
+        print(user_id)
+
         return "Embeddings saved in the database."
 
 
 @app.route("/embed_pptx", methods=["POST","OPTIONS"])
+@token_required
 def embed_pptx():
     loader = PptxReader()
+    user_id = (db.session.query(models.User.id).filter(models.User.username == g.user).first()[0])
+    upload_dir = os.path.join("uploads", str(user_id))
+    os.makedirs(upload_dir, exist_ok=True)
     # Check if the post request has the file part
     if "file" not in request.files:
         return "No file part"
@@ -178,7 +271,7 @@ def embed_pptx():
     if file:
         # Securely save the uploaded file
         filename = secure_filename(file.filename)
-        filepath = os.path.join(app.config["UPLOAD_FOLDER"], filename)
+        filepath = os.path.join(upload_dir, filename)
         file.save(filepath)
 
         # Load and process the PDF content
@@ -220,11 +313,24 @@ def embed_pptx():
 
         assign_topic(stored_document)
 
+        #user_id = (db.session.query(models.User.id).filter(models.User.username == g.user).first()[0])
+
+        #save owns document
+        owns_document = models.OwnsDocument(
+            user_id=user_id, document_id=stored_document.id
+        )
+        db.session.add(owns_document)
+        db.session.commit()
+
         return "Embeddings saved in the database."
 
 
 @app.route("/embed_audio", methods=["POST","OPTIONS"])
+@token_required
 def embed_audio():
+    user_id = (db.session.query(models.User.id).filter(models.User.username == g.user).first()[0])
+    upload_dir = os.path.join("uploads", str(user_id))
+    os.makedirs(upload_dir, exist_ok=True)
     # Check if the post request has the audio file part
     if "file" not in request.files:
         return "No audio file part"
@@ -238,7 +344,7 @@ def embed_audio():
     if audio_file and allowed_file(audio_file.filename):
         # Securely save the uploaded audio file
         filename = secure_filename(audio_file.filename)
-        filepath = os.path.join(app.config["UPLOAD_FOLDER"], filename)
+        filepath = os.path.join(upload_dir, filename)
         audio_file.save(filepath)
 
         # Load and process the audio content
@@ -277,14 +383,27 @@ def embed_audio():
 
         assign_topic(stored_document)
 
+        user_id = (db.session.query(models.User.id).filter(models.User.username == g.user).first()[0])
+
+        #save owns document
+        owns_document = models.OwnsDocument(
+            user_id=user_id, document_id=stored_document.id
+        )
+        db.session.add(owns_document)
+        db.session.commit()
+
         return "Audio embeddings saved in the database."
     else:
         return "Invalid audio file format. Allowed extensions: mp3, mp4, mpeg, mpga, m4a, wav, webm"
 
 
 @app.route("/embed_docx", methods=["POST","OPTIONS"])
+@token_required
 def embed_docx():
     loader = DocxReader()
+    user_id = (db.session.query(models.User.id).filter(models.User.username == g.user).first()[0])
+    upload_dir = os.path.join("uploads", str(user_id))
+    os.makedirs(upload_dir, exist_ok=True)
     # Check if the post request has the file part
     if "file" not in request.files:
         return "No file part"
@@ -298,7 +417,7 @@ def embed_docx():
     if file:
         # Securely save the uploaded file
         filename = secure_filename(file.filename)
-        filepath = os.path.join(app.config["UPLOAD_FOLDER"], filename)
+        filepath = os.path.join(upload_dir, filename)
         file.save(filepath)
 
         # Load and process the docx content
@@ -345,107 +464,186 @@ def embed_docx():
 
         assign_topic(stored_document)
 
+        user_id = (db.session.query(models.User.id).filter(models.User.username == g.user).first()[0])
+
+        #save owns document
+        owns_document = models.OwnsDocument(
+            user_id=user_id, document_id=stored_document.id
+        )
+        db.session.add(owns_document)
+        db.session.commit()
+
         return "Embeddings saved in the database."
 
 
-@app.route("/search", methods=["POST","OPTIONS"])
+@app.route("/search", methods=["POST"])
+@token_required
 def search():
     data = request.json
     query = data.get("query")
     query_embedding = embeddings_model.embed_query(query)
+    user_id = (db.session.query(models.User.id).filter(models.User.username == g.user).first()[0])
 
     # Create a dictionary to store the results, indexed by document ID
     results_dict = {}
 
     # Perform a join between Embeddings, Document, Topic, and Course tables
-
     results = db.session.query(
         models.Embeddings, models.Document, models.Topic, models.Course
     )
     results = results.join(
         models.Document, models.Embeddings.document_id == models.Document.id
     )
-    results = results.join(
-        models.Topic, models.Document.topic_id == models.Topic.id
-    )
+    results = results.join(models.Topic, models.Document.topic_id == models.Topic.id)
     results = results.join(models.Course, models.Topic.course_id == models.Course.id)
+    results = results.join(models.OwnsDocument, models.OwnsDocument.document_id == models.Document.id)
+
+    # Filter by user_id
+    results = results.filter(
+        models.OwnsDocument.user_id == user_id,
+        models.Document.deleted == False
+    )
 
     # Calculate and order by cosine distance
     results = results.order_by(
         models.Embeddings.embedding.cosine_distance(query_embedding)
     )
 
+    doc_ids = []
     for result in results:
         embedding, document, course, topic = result
         doc_id = document.id
         # Check if this document ID is already in the results_dict
         if doc_id not in results_dict:
+            doc_ids.append(doc_id)
             results_dict[doc_id] = {
                 "title": document.title,
                 "content": embedding.split_content,
                 "doc_id": doc_id,
                 "keywords": document.keywords,
                 "course": course.name,
-                "topic": topic.name
+                "topic": topic.name,
             }
 
     # Convert the results_dict values to a list
-    response_data = list(results_dict.values())
+    response_data = list(results_dict.values())[:5]
 
-    return {"results": response_data}
+    query_log_entry = models.QueryLog(query=query, user_id=user_id, doc_ids=doc_ids)
+    db.session.add(query_log_entry)
+    db.session.commit()
+
+    return {"results": response_data}, 200
 
 
 @app.route("/recommend", methods=["POST","OPTIONS"])
+@token_required
 def search_similar_resource():
     data = request.json
     doc_id = data.get("document_id")
+    user_id = data.get("user_id")
 
-    topic_id = (db.session.query(models.Document.topic_id).filter(models.Document.id == doc_id).first())[0]
+    topic_id = (
+        db.session.query(models.Document.topic_id)
+        .filter(models.Document.id == doc_id)
+        .first()
+    )[0]
+    course_id = (
+        db.session.query(models.Topic.course_id)
+        .filter(models.Topic.id == topic_id)
+        .first()
+    )[0]
 
-    course_id = (db.session.query(models.Topic.course_id).filter(models.Topic.id == topic_id).first())[0]
-
-    # print(course_id)
-
-    similar_topic_ids = (db.session.query(models.Topic.id).filter(models.Topic.course_id == course_id).all())
+    similar_topic_ids = (
+        db.session.query(models.Topic.id)
+        .filter(models.Topic.course_id == course_id)
+        .all()
+    )
     similar_topic_ids = [topic_id for (topic_id,) in similar_topic_ids]
 
-    similar_topic_docs = (db.session.query(models.Document.id).filter(models.Document.topic_id.in_(similar_topic_ids)).all())
+    similar_topic_docs = (
+        db.session.query(models.Document.id)
+        .filter(
+            models.Document.topic_id.in_(similar_topic_ids),
+            models.Document.id != doc_id,
+            models.Document.deleted == False
+        )
+        .all()
+    )
     similar_topic_docs = [document_id for (document_id,) in similar_topic_docs]
-    print(similar_topic_docs)
 
-    response_dict = {}
+    doc_results = (
+        db.session.query(models.DocSimilarity)
+        .filter(
+            models.DocSimilarity.existing_document_id.in_(similar_topic_docs),
+            models.DocSimilarity.new_document_id == doc_id,
+            models.DocSimilarity.existing_document_id
+            != models.DocSimilarity.new_document_id,
+        )
+        .order_by(models.DocSimilarity.similarity_score.desc())
+        .all()
+    )
 
-    doc_results = db.session.query(
-        models.DocSimilarity
-        ).filter(
-        models.DocSimilarity.new_document_id.in_(similar_topic_docs), 
-        models.DocSimilarity.existing_document_id != models.DocSimilarity.new_document_id
-        ).order_by(
-            models.DocSimilarity.similarity_score.desc()
-            ).slice(0, 5).all()
-   
-    all_users = (db.session.query(models.User.id).count())
+    all_users = db.session.query(models.User.id).count()
 
-    x=0
-    for result in doc_results:
-        user_count = (db.session.query(models.OwnsDocument).filter(models.OwnsDocument.document_id == result.existing_document_id).count())
-        recommending_doc_ratings = (db.session.query( models.Document.ratings).filter(models.Document.id == result.existing_document_id).scalar())
-        recommending_doc_title = (db.session.query(models.Document.title).filter(models.Document.id == result.existing_document_id).scalar())
-        response_dict[x] = {
-            "document_id": result.existing_document_id,
-            "document_title": recommending_doc_title,
-            "ratings": recommending_doc_ratings,
-            "similarity_score": result.similarity_score,
-            "user_count": user_count,
-            "similarity_weight": (user_count / all_users) * result.similarity_score * (recommending_doc_ratings / 5)         
-        }
-        x=x+1
+    response_dict = []
+    for count, result in enumerate(doc_results):
+        document_owners = [
+            owner_id[0]
+            for owner_id in db.session.query(models.OwnsDocument.user_id)
+            .filter(models.OwnsDocument.document_id == result.existing_document_id)
+            .all()
+        ]
 
-    response_data = sorted(response_dict.values(), key=lambda x: x["similarity_weight"], reverse=True)
+        if user_id in document_owners:
+            continue
 
-    return {"results": response_data}
+        user_count = (
+            db.session.query(models.OwnsDocument)
+            .filter(models.OwnsDocument.document_id == result.existing_document_id)
+            .count()
+        )
+        recommending_doc_ratings = (
+            db.session.query(models.Document.ratings)
+            .filter(models.Document.id == result.existing_document_id)
+            .scalar()
+        )
+        recommending_doc_title = (
+            db.session.query(models.Document.title)
+            .filter(models.Document.id == result.existing_document_id)
+            .scalar()
+        )
+        resource_topic = (
+            db.session.query(models.Topic)
+            .filter(
+                models.Topic.id == models.Document.topic_id,
+                models.Document.id == result.existing_document_id,
+            )
+            .first()
+        )
+        response_dict.append(
+            {
+                "document_id": result.existing_document_id,
+                "document_title": recommending_doc_title,
+                "topic_id": resource_topic.id,
+                "topic_name": resource_topic.name,
+                "ratings": recommending_doc_ratings,
+                "similarity_score": result.similarity_score,
+                "user_count": user_count,
+                "similarity_weight": (user_count / all_users)
+                * result.similarity_score
+                * (recommending_doc_ratings / 5),
+            }
+        )
+
+        if len(response_dict) == 5:
+            print("Breaking the loop at count =", count)
+            break
+
+    return {"results": response_dict}
+
 
 @app.route("/resource-info", methods=["GET","OPTIONS"])
+@token_required
 def get_resource_info():
     document_id = request.args.get("document_id")
     query = request.args.get("query")
@@ -504,8 +702,10 @@ def get_resource_info():
 
 
 @app.route("/course", methods=["GET","OPTIONS"])
+@token_required
 def get_course():
     document_id = request.args.get("document_id")
+    user_id = (db.session.query(models.User.id).filter(models.User.username == g.user).first()[0])
 
     # Find the document with the given document_id
     document = (
@@ -541,32 +741,37 @@ def get_course():
         topic_data = {"topic_name": topic.name, "documents": []}
 
         documents = (
-                db.session.query(models.Document)
-                .filter(models.Document.topic_id == topic.id)
-                .all()
+            db.session.query(models.Document)
+            .join(models.OwnsDocument, models.Document.id == models.OwnsDocument.document_id)
+            .filter(
+                models.Document.topic_id == topic.id,
+                models.Document.deleted == False,
+                models.OwnsDocument.user_id == user_id
+            )
+            .all()
         )
 
         for doc in documents:
-                # Retrieve the similarity score from the 'doc_similarity' table
-                similarity_entry = (
-                    db.session.query(models.DocSimilarity)
-                    .filter(
-                        (models.DocSimilarity.new_document_id == document_id)
-                        & (models.DocSimilarity.existing_document_id == doc.id)
-                    )
-                    .first()
+            # Retrieve the similarity score from the 'doc_similarity' table
+            similarity_entry = (
+                db.session.query(models.DocSimilarity)
+                .filter(
+                    (models.DocSimilarity.new_document_id == document_id)
+                    & (models.DocSimilarity.existing_document_id == doc.id)
                 )
-                similarity_score = (
-                    similarity_entry.similarity_score if similarity_entry else None
-                )
+                .first()
+            )
+            similarity_score = (
+                similarity_entry.similarity_score if similarity_entry else None
+            )
 
-                document_data = {
-                    "document_name": doc.title,
-                    "document_id": doc.id,
-                    "similarity_score": similarity_score,
-                }
+            document_data = {
+                "document_name": doc.title,
+                "document_id": doc.id,
+                "similarity_score": similarity_score,
+            }
 
-                topic_data["documents"].append(document_data)
+            topic_data["documents"].append(document_data)
 
         course_data["topics"].append(topic_data)
 
@@ -575,6 +780,7 @@ def get_course():
 
 # Create a route to handle the DELETE request
 @app.route("/resource", methods=["DELETE","OPTIONS"])
+@token_required
 def delete_resource():
     try:
         # Get the 'document_id' from the request's query parameters
@@ -591,7 +797,7 @@ def delete_resource():
             return jsonify({"error": "Document not found"}), 404
 
         # Delete the document from the database
-        db.session.delete(document)
+        document.deleted = True
         db.session.commit()
 
         # Assuming a successful deletion, return a success message
@@ -606,6 +812,7 @@ def delete_resource():
 
 
 @app.route("/topic", methods=["PUT","OPTIONS"])
+@token_required
 def edit_topic():
     try:
         # Get the 'document_id' and 'topic' from the request's query parameters
@@ -625,10 +832,7 @@ def edit_topic():
 
         # Find the corresponding topic id
         topic_id = (
-            db.session.query(models.Topic)
-            .filter(models.Topic.name == topic)
-            .first()
-            .id
+            db.session.query(models.Topic).filter(models.Topic.name == topic).first().id
         )
 
         if not topic_id:
@@ -762,4 +966,52 @@ def get_keywords(docs):
             if len(keyword_set) >= 5:
                 break
 
+        if len(keyword_set) >= 5:
+            break
+
     return list(keyword_set)
+
+def authenticate(username, password):
+    user = {}
+    user['username'] = username
+    user['password'] = db.session.query(models.User.password).filter(models.User.username == username).first()[0]
+    user['name'] = db.session.query(models.User.name).filter(models.User.username == username).first()[0]
+
+    if sha256_crypt.verify(password, user['password']):
+        return user
+
+
+@app.route('/login', methods=['POST'])
+def login():
+    data = request.json
+    if not data or 'username' not in data or 'password' not in data:
+        return jsonify({"message": "Missing username or password"}), 400
+
+    username = data['username']
+    password = data['password']
+
+    user = authenticate(username, password)
+
+    if user:
+        token = jwt.encode({'identity': user['username'], 'exp': datetime.utcnow() + timedelta(hours=1)}, app.config['SECRET_KEY'], algorithm='HS256')
+        return jsonify({"access_token": token, "name": user["name"]}), 200
+    else:
+        return jsonify({"message": "Invalid username or password"}), 401
+
+
+@app.route('/register', methods=["POST"])
+def register():
+    data = request.json
+    name = data.get("name")
+    email = data.get("email")
+    password = data.get("password")
+
+    encrypted_passwored = sha256_crypt.encrypt(password)
+    new_user = models.User(
+        name=name, username=email, password=encrypted_passwored
+    )
+    db.session.add(new_user)
+    db.session.commit()
+
+    return "New user added"
+  
