@@ -30,6 +30,9 @@ from passlib.hash import sha256_crypt
 import jwt
 from datetime import datetime, timedelta
 
+ffmpeg_path = '/usr/bin'
+os.environ['PATH'] = f'{ffmpeg_path}:{os.environ["PATH"]}'
+
 modelPath = "../models/all-MiniLM-L6-v2"
 model_kwargs = {"device": "cpu"}
 encode_kwargs = {"normalize_embeddings": False}
@@ -76,7 +79,7 @@ def token_required(f):
     return decorated
 
 
-@app.route("/getPdf", methods=["GET","OPTIONS"])
+@app.route("/getPdf", methods=["GET"])
 @token_required
 def serve_pdf():
     filename = request.args.get("filename")
@@ -175,7 +178,7 @@ def embed_youtube():
     return "Embeddings saved in the database."
 
 
-@app.route("/embed_pdf", methods=["POST","OPTIONS"])
+@app.route("/embed_pdf", methods=["POST"])
 @token_required
 def embed_pdf():
     loader = PDFReader()
@@ -251,7 +254,7 @@ def embed_pdf():
         return "Embeddings saved in the database."
 
 
-@app.route("/embed_pptx", methods=["POST","OPTIONS"])
+@app.route("/embed_pptx", methods=["POST"])
 @token_required
 def embed_pptx():
     loader = PptxReader()
@@ -325,7 +328,7 @@ def embed_pptx():
         return "Embeddings saved in the database."
 
 
-@app.route("/embed_audio", methods=["POST","OPTIONS"])
+@app.route("/embed_audio", methods=["POST"])
 @token_required
 def embed_audio():
     user_id = (db.session.query(models.User.id).filter(models.User.username == g.user).first()[0])
@@ -397,7 +400,7 @@ def embed_audio():
         return "Invalid audio file format. Allowed extensions: mp3, mp4, mpeg, mpga, m4a, wav, webm"
 
 
-@app.route("/embed_docx", methods=["POST","OPTIONS"])
+@app.route("/embed_docx", methods=["POST"])
 @token_required
 def embed_docx():
     loader = DocxReader()
@@ -535,7 +538,7 @@ def search():
     return {"results": response_data}, 200
 
 
-@app.route("/recommend", methods=["POST","OPTIONS"])
+@app.route("/recommend", methods=["POST"])
 @token_required
 def search_similar_resource():
     data = request.json
@@ -642,7 +645,7 @@ def search_similar_resource():
     return {"results": response_dict}
 
 
-@app.route("/resource-info", methods=["GET","OPTIONS"])
+@app.route("/resource-info", methods=["GET"])
 @token_required
 def get_resource_info():
     document_id = request.args.get("document_id")
@@ -701,7 +704,7 @@ def get_resource_info():
     )
 
 
-@app.route("/course", methods=["GET","OPTIONS"])
+@app.route("/course", methods=["GET"])
 @token_required
 def get_course():
     document_id = request.args.get("document_id")
@@ -779,7 +782,7 @@ def get_course():
 
 
 # Create a route to handle the DELETE request
-@app.route("/resource", methods=["DELETE","OPTIONS"])
+@app.route("/resource", methods=["DELETE"])
 @token_required
 def delete_resource():
     try:
@@ -811,7 +814,7 @@ def delete_resource():
         return jsonify({"error": str(e)}), 500  # 500 Internal Server Error
 
 
-@app.route("/topic", methods=["PUT","OPTIONS"])
+@app.route("/topic", methods=["PUT"])
 @token_required
 def edit_topic():
     try:
@@ -993,7 +996,7 @@ def login():
     user = authenticate(username, password)
 
     if user:
-        token = jwt.encode({'identity': user['username'], 'exp': datetime.utcnow() + timedelta(hours=1)}, app.config['SECRET_KEY'], algorithm='HS256')
+        token = jwt.encode({'identity': user['username'], 'exp': datetime.utcnow() + timedelta(weeks=1)}, app.config['SECRET_KEY'], algorithm='HS256')
         return jsonify({"access_token": token, "name": user["name"]}), 200
     else:
         return jsonify({"message": "Invalid username or password"}), 401
