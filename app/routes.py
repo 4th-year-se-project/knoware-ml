@@ -30,6 +30,26 @@ from passlib.hash import sha256_crypt
 import jwt
 from datetime import datetime, timedelta
 
+# import datetime
+import os
+import pprint
+
+
+from flask import Flask, jsonify, redirect, request, render_template, url_for
+from flask_caching import Cache
+from werkzeug.exceptions import Forbidden
+from pylti1p3.contrib.flask import (
+    FlaskOIDCLogin,
+    FlaskMessageLaunch,
+    FlaskRequest,
+    FlaskCacheDataStorage,
+)
+from pylti1p3.deep_link_resource import DeepLinkResource
+from pylti1p3.grade import Grade
+from pylti1p3.lineitem import LineItem
+from pylti1p3.tool_config import ToolConfJsonFile
+from pylti1p3.registration import Registration
+
 modelPath = "../models/all-MiniLM-L6-v2"
 model_kwargs = {"device": "cpu"}
 encode_kwargs = {"normalize_embeddings": False}
@@ -46,6 +66,106 @@ sentence_model = SentenceTransformer(modelPath)
 kw_model = KeyBERT(model=sentence_model)
 
 ALLOWED_EXTENSIONS = {"mp3", "mp4", "mpeg", "mpga", "m4a", "wav", "webm"}
+
+
+cache = Cache(app)
+
+
+class ExtendedFlaskMessageLaunch(FlaskMessageLaunch):
+    def validate_nonce(self):
+        """
+        Probably it is bug on "https://lti-ri.imsglobal.org":
+        site passes invalid "nonce" value during deep links launch.
+        Because of this in case of iss == http://imsglobal.org just skip nonce validation.
+
+        """
+        iss = self.get_iss()
+        deep_link_launch = self.is_deep_link_launch()
+        if iss == "http://imsglobal.org" and deep_link_launch:
+            return self
+        return super().validate_nonce()
+
+
+def get_lti_config_path():
+    return os.path.join(app.root_path, "configs", "moodle.json")
+
+
+def get_launch_data_storage():
+    return FlaskCacheDataStorage(cache)
+
+
+def get_jwk_from_public_key(key_name):
+    key_path = os.path.join(app.root_path, "configs", key_name)
+    f = open(key_path, "r")
+    key_content = f.read()
+    jwk = Registration.get_jwk(key_content)
+    f.close()
+    return jwk
+
+
+@app.route("/mlogin/", methods=["GET", "POST"])
+def mlogin():
+    tool_conf = ToolConfJsonFile(get_lti_config_path())
+    launch_data_storage = get_launch_data_storage()
+
+    flask_request = FlaskRequest()
+    target_link_uri = flask_request.get_param("target_link_uri")
+    if not target_link_uri:
+        raise Exception('Missing "target_link_uri" param')
+
+    oidc_login = FlaskOIDCLogin(
+        flask_request, tool_conf, launch_data_storage=launch_data_storage
+    )
+    return oidc_login.enable_check_cookies().redirect(target_link_uri)
+
+
+@app.route("/launch/", methods=["POST"])
+def launch():
+    tool_conf = ToolConfJsonFile(get_lti_config_path())
+    flask_request = FlaskRequest()
+    launch_data_storage = get_launch_data_storage()
+    message_launch = ExtendedFlaskMessageLaunch(
+        flask_request, tool_conf, launch_data_storage=launch_data_storage
+    )
+    message_launch_data = message_launch.get_launch_data()
+    # pprint.pprint(message_launch_data.get("email"))
+    email = message_launch_data.get("email")
+    pprint.pprint(email)
+    course = message_launch_data.get(
+        "https://purl.imsglobal.org/spec/lti/claim/context"
+    ).get("label")
+    pprint.pprint(course)
+
+    difficulty = message_launch_data.get(
+        "https://purl.imsglobal.org/spec/lti/claim/custom", {}
+    ).get("difficulty", None)
+    if not difficulty:
+        difficulty = request.args.get("difficulty", "normal")
+
+    tpl_kwargs = {
+        "is_deep_link_launch": message_launch.is_deep_link_launch(),
+        "launch_data": message_launch.get_launch_data(),
+        "launch_id": message_launch.get_launch_id(),
+        "curr_user_name": message_launch_data.get("name", ""),
+        "curr_diff": difficulty,
+    }
+    query_string = "&".join([f"{key}={value}" for key, value in tpl_kwargs.items()])
+
+    # Replace the following line with the endpoint name of your React frontend route
+    react_frontend_endpoint = "https://medium.com/@lucamassaron/fine-tuning-a-large-language-model-on-kaggle-notebooks-for-solving-real-world-tasks-part-3-f15228f1c2a2"
+
+    # Generate the URL for the React frontend using url_for
+
+    # Redirect to the React frontend
+    return redirect(react_frontend_endpoint + "?" + query_string)
+    # set to token
+    # return render_template("game.html", **tpl_kwargs)
+
+
+@app.route("/jwks/", methods=["GET"])
+def get_jwks():
+    tool_conf = ToolConfJsonFile(get_lti_config_path())
+    return jsonify({"keys": tool_conf.get_jwks()})
 
 
 def allowed_file(filename):
