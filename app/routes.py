@@ -152,7 +152,7 @@ def launch():
     query_string = "&".join([f"{key}={value}" for key, value in tpl_kwargs.items()])
 
     # Replace the following line with the endpoint name of your React frontend route
-    react_frontend_endpoint = "https://medium.com/@lucamassaron/fine-tuning-a-large-language-model-on-kaggle-notebooks-for-solving-real-world-tasks-part-3-f15228f1c2a2"
+    react_frontend_endpoint = "http://127.0.0.1:3000/"
 
     # Generate the URL for the React frontend using url_for
 
