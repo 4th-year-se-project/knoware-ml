@@ -130,26 +130,52 @@ def launch():
     message_launch_data = message_launch.get_launch_data()
     # pprint.pprint(message_launch_data.get("email"))
     email = message_launch_data.get("email")
+    name = message_launch_data.get("name")
     pprint.pprint(email)
     course = message_launch_data.get(
         "https://purl.imsglobal.org/spec/lti/claim/context"
     ).get("label")
     pprint.pprint(course)
 
-    difficulty = message_launch_data.get(
-        "https://purl.imsglobal.org/spec/lti/claim/custom", {}
-    ).get("difficulty", None)
-    if not difficulty:
-        difficulty = request.args.get("difficulty", "normal")
+    user = db.session.query(models.User).filter(models.User.username == email).first()
 
-    tpl_kwargs = {
-        "is_deep_link_launch": message_launch.is_deep_link_launch(),
-        "launch_data": message_launch.get_launch_data(),
-        "launch_id": message_launch.get_launch_id(),
-        "curr_user_name": message_launch_data.get("name", ""),
-        "curr_diff": difficulty,
-    }
-    query_string = "&".join([f"{key}={value}" for key, value in tpl_kwargs.items()])
+    if not user:
+        # add new user
+        user = models.User(
+            name=name, username=email, password=sha256_crypt.hash("password")
+        )
+        db.session.add(user)
+        db.session.commit()
+
+    user_id = user.id
+
+    course = (
+        db.session.query(models.Course).filter(models.Course.code == course).first()
+    )
+
+    # check if user registered to course else add
+    registered_to = (
+        db.session.query(models.RegisteredTo)
+        .filter(models.RegisteredTo.user_id == user_id)
+        .filter(models.RegisteredTo.course_id == course.id)
+        .first()
+    )
+
+    if not registered_to:
+        registered_to = models.RegisteredTo(user_id=user_id, course_id=course.id)
+        db.session.add(registered_to)
+        db.session.commit()
+
+    token = jwt.encode(
+        {
+            "identity": user.username,
+            "exp": datetime.utcnow() + timedelta(weeks=1),
+        },
+        app.config["SECRET_KEY"],
+        algorithm="HS256",
+    )
+
+    pprint.pprint(token)
 
     # Replace the following line with the endpoint name of your React frontend route
     react_frontend_endpoint = "http://127.0.0.1:3000/"
@@ -157,7 +183,9 @@ def launch():
     # Generate the URL for the React frontend using url_for
 
     # Redirect to the React frontend
-    return redirect(react_frontend_endpoint + "?" + query_string)
+    return redirect(
+        react_frontend_endpoint + "?" + "token=" + token + "&" + "name=" + name
+    )
     # set to token
     # return render_template("game.html", **tpl_kwargs)
 
@@ -1062,14 +1090,42 @@ def assign_topic(stored_document):
         .filter(models.Embeddings.document_id == stored_document.id)
         .all()
     )
-    topics = db.session.query(models.Topic).all()
+
+    user_id = (
+        db.session.query(models.User.id)
+        .filter(models.User.username == g.user)
+        .first()[0]
+    )
+    print(user_id)
+    # get topics from registered courses
+    registered_courses = (
+        db.session.query(models.Course)
+        .join(
+            models.RegisteredTo,
+            models.Course.id == models.RegisteredTo.course_id,
+        )
+        .filter(
+            models.RegisteredTo.user_id == user_id,
+        )
+        .all()
+    )
+    candidate_topics = []
+    for course in registered_courses:
+        topics = (
+            db.session.query(models.Topic)
+            .filter(models.Topic.course_id == course.id)
+            .all()
+        )
+        candidate_topics.extend(topics)
+
+    # topics = db.session.query(models.Topic).all()
 
     best_topic = None
     best_similarity = -1
 
     # Iterate through document chunks and calculate similarities with the topics
     for embedding in embeddings:
-        for topic in topics:
+        for topic in candidate_topics:
             similarity = cosine_similarity([embedding.embedding], [topic.embedding])[0][
                 0
             ]
