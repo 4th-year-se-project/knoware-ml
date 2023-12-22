@@ -56,21 +56,24 @@ ALLOWED_EXTENSIONS = {"mp3", "mp4", "mpeg", "mpga", "m4a", "wav", "webm"}
 def allowed_file(filename):
     return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
 
+
 def token_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
         token = None
 
-        if 'Authorization' in request.headers:
-            auth_header = request.headers['Authorization']
-            token = auth_header.split(" ")[1] if auth_header.startswith("Bearer ") else None
+        if "Authorization" in request.headers:
+            auth_header = request.headers["Authorization"]
+            token = (
+                auth_header.split(" ")[1] if auth_header.startswith("Bearer ") else None
+            )
 
         if not token:
             return jsonify({"message": "Token is missing"}), 401
 
         try:
-            data = jwt.decode(token, app.config['SECRET_KEY'], algorithms=['HS256'])
-            g.user = data['identity']  # Store the user identity in Flask's context 'g'
+            data = jwt.decode(token, app.config["SECRET_KEY"], algorithms=["HS256"])
+            g.user = data["identity"]  # Store the user identity in Flask's context 'g'
         except jwt.ExpiredSignatureError:
             return jsonify({"message": "Token has expired"}), 401
         except jwt.InvalidTokenError:
@@ -80,19 +83,31 @@ def token_required(f):
 
     return decorated
 
+
 @app.route("/getPdf", methods=["GET"])
 @token_required
 def serve_pdf():
-    filename = request.args.get("filename")
+    doc_id = request.args.get("document_id")
+    print(doc_id)
+    filename = (
+        db.session.query(models.Document.title)
+        .filter(models.Document.id == doc_id)
+        .first()[0]
+    )
 
-    user_id = (db.session.query(models.User.id).filter(models.User.username == g.user).first()[0])
-    uploaded_dir = os.path.join("uploads", str(user_id))
+    owner_id = (
+        db.session.query(models.OwnsDocument.user_id)
+        .filter(models.OwnsDocument.document_id == doc_id)
+        .first()[0]
+    )
+    uploaded_dir = os.path.join("uploads", str(owner_id))
     pdf_directory = os.path.join(os.getcwd(), uploaded_dir)
 
     if not filename.lower().endswith('.pdf'):
         filename = os.path.splitext(filename)[0] + '.pdf'
 
     pdf_file_path = os.path.join(pdf_directory, filename)
+    print(pdf_file_path)
 
     return send_file(pdf_file_path, as_attachment=True, mimetype="application/pdf")
 
@@ -101,7 +116,11 @@ def serve_pdf():
 @token_required
 def embed_youtube():
     loader = YoutubeTranscriptReader()
-    user_id = (db.session.query(models.User.id).filter(models.User.username == g.user).first()[0])
+    user_id = (
+        db.session.query(models.User.id)
+        .filter(models.User.username == g.user)
+        .first()[0]
+    )
     upload_dir = os.path.join("uploads", str(user_id))
     os.makedirs(upload_dir, exist_ok=True)
     data = request.json
@@ -124,9 +143,7 @@ def embed_youtube():
         stream.download(output_path=upload_dir)
 
         # Wait for the file to be downloaded
-        while not os.path.exists(
-            os.path.join(upload_dir, stream.default_filename)
-        ):
+        while not os.path.exists(os.path.join(upload_dir, stream.default_filename)):
             time.sleep(1)
 
         # Rename the downloaded file to the desired filename
@@ -140,6 +157,9 @@ def embed_youtube():
         os.remove(filepath)
 
     preprocessed_transcript_text = preprocess_text(transcript_text)
+    if existsDuplicate(preprocessed_transcript_text, user_id):
+        return "Duplicate document", 400
+
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=150)
     docs = text_splitter.split_text(transcript_text)
     embeddings = embeddings_model.embed_documents(docs)
@@ -171,12 +191,14 @@ def embed_youtube():
 
     assign_topic(stored_document)
 
-    user_id = (db.session.query(models.User.id).filter(models.User.username == g.user).first()[0])
-
-    #save owns document
-    owns_document = models.OwnsDocument(
-        user_id=user_id, document_id=stored_document.id
+    user_id = (
+        db.session.query(models.User.id)
+        .filter(models.User.username == g.user)
+        .first()[0]
     )
+
+    # save owns document
+    owns_document = models.OwnsDocument(user_id=user_id, document_id=stored_document.id)
     db.session.add(owns_document)
     db.session.commit()
 
@@ -187,7 +209,11 @@ def embed_youtube():
 @token_required
 def embed_pdf():
     loader = PDFReader()
-    user_id = (db.session.query(models.User.id).filter(models.User.username == g.user).first()[0])
+    user_id = (
+        db.session.query(models.User.id)
+        .filter(models.User.username == g.user)
+        .first()[0]
+    )
     upload_dir = os.path.join("uploads", str(user_id))
     os.makedirs(upload_dir, exist_ok=True)
     # Check if the post request has the file part
@@ -213,6 +239,8 @@ def embed_pdf():
         document_texts = [document.text for document in documents]
         document_text = "".join(document_texts)
         preprocessed_text = preprocess_text(document_text)
+        if existsDuplicate(preprocessed_text, user_id):
+            return "Duplicate document", 400
         text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=1000, chunk_overlap=150
         )
@@ -245,9 +273,13 @@ def embed_pdf():
 
         assign_topic(stored_document)
 
-        user_id = (db.session.query(models.User.id).filter(models.User.username == g.user).first()[0])
+        user_id = (
+            db.session.query(models.User.id)
+            .filter(models.User.username == g.user)
+            .first()[0]
+        )
 
-        #save owns document
+        # save owns document
         owns_document = models.OwnsDocument(
             user_id=user_id, document_id=stored_document.id
         )
@@ -271,7 +303,11 @@ def convert_to_pdf(input_file, output_file):
 @token_required
 def embed_pptx():
     loader = PptxReader()
-    user_id = (db.session.query(models.User.id).filter(models.User.username == g.user).first()[0])
+    user_id = (
+        db.session.query(models.User.id)
+        .filter(models.User.username == g.user)
+        .first()[0]
+    )
     upload_dir = os.path.join("uploads", str(user_id))
     os.makedirs(upload_dir, exist_ok=True)
     # Check if the post request has the file part
@@ -308,6 +344,8 @@ def embed_pptx():
         document_texts = [document.text for document in documents]
         document_text = "".join(document_texts)
         preprocessed_text = preprocess_text(document_text)
+        if existsDuplicate(preprocessed_text, user_id):
+            return "Duplicate document", 400
         docs = text_splitter.split_text(document_text)
         embeddings = embeddings_model.embed_documents(docs)
         keywords = get_keywords(docs)
@@ -337,9 +375,9 @@ def embed_pptx():
 
         assign_topic(stored_document)
 
-        #user_id = (db.session.query(models.User.id).filter(models.User.username == g.user).first()[0])
+        # user_id = (db.session.query(models.User.id).filter(models.User.username == g.user).first()[0])
 
-        #save owns document
+        # save owns document
         owns_document = models.OwnsDocument(
             user_id=user_id, document_id=stored_document.id
         )
@@ -354,7 +392,11 @@ def embed_pptx():
 @app.route("/embed_audio", methods=["POST"])
 @token_required
 def embed_audio():
-    user_id = (db.session.query(models.User.id).filter(models.User.username == g.user).first()[0])
+    user_id = (
+        db.session.query(models.User.id)
+        .filter(models.User.username == g.user)
+        .first()[0]
+    )
     upload_dir = os.path.join("uploads", str(user_id))
     os.makedirs(upload_dir, exist_ok=True)
     # Check if the post request has the audio file part
@@ -376,6 +418,8 @@ def embed_audio():
         # Load and process the audio content
         transcript = whisper_model.transcribe(filepath)
         preprocessed_text = preprocess_text(transcript["text"])
+        if existsDuplicate(preprocessed_text, user_id):
+            return "Duplicate document", 400
         text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=1000, chunk_overlap=150
         )
@@ -409,9 +453,13 @@ def embed_audio():
 
         assign_topic(stored_document)
 
-        user_id = (db.session.query(models.User.id).filter(models.User.username == g.user).first()[0])
+        user_id = (
+            db.session.query(models.User.id)
+            .filter(models.User.username == g.user)
+            .first()[0]
+        )
 
-        #save owns document
+        # save owns document
         owns_document = models.OwnsDocument(
             user_id=user_id, document_id=stored_document.id
         )
@@ -427,7 +475,11 @@ def embed_audio():
 @token_required
 def embed_docx():
     loader = DocxReader()
-    user_id = (db.session.query(models.User.id).filter(models.User.username == g.user).first()[0])
+    user_id = (
+        db.session.query(models.User.id)
+        .filter(models.User.username == g.user)
+        .first()[0]
+    )
     upload_dir = os.path.join("uploads", str(user_id))
     os.makedirs(upload_dir, exist_ok=True)
     # Check if the post request has the file part
@@ -463,6 +515,8 @@ def embed_docx():
         document_text = "".join(document_texts)
 
         preprocessed_text = preprocess_text(document_text)
+        if existsDuplicate(preprocessed_text, user_id):
+            return "Duplicate document", 400
         text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=1000, chunk_overlap=150
         )
@@ -498,9 +552,13 @@ def embed_docx():
 
         assign_topic(stored_document)
 
-        user_id = (db.session.query(models.User.id).filter(models.User.username == g.user).first()[0])
+        user_id = (
+            db.session.query(models.User.id)
+            .filter(models.User.username == g.user)
+            .first()[0]
+        )
 
-        #save owns document
+        # save owns document
         owns_document = models.OwnsDocument(
             user_id=user_id, document_id=stored_document.id
         )
@@ -518,7 +576,11 @@ def search():
     data = request.json
     query = data.get("query")
     query_embedding = embeddings_model.embed_query(query)
-    user_id = (db.session.query(models.User.id).filter(models.User.username == g.user).first()[0])
+    user_id = (
+        db.session.query(models.User.id)
+        .filter(models.User.username == g.user)
+        .first()[0]
+    )
 
     # Create a dictionary to store the results, indexed by document ID
     results_dict = {}
@@ -532,12 +594,13 @@ def search():
     )
     results = results.join(models.Topic, models.Document.topic_id == models.Topic.id)
     results = results.join(models.Course, models.Topic.course_id == models.Course.id)
-    results = results.join(models.OwnsDocument, models.OwnsDocument.document_id == models.Document.id)
+    results = results.join(
+        models.OwnsDocument, models.OwnsDocument.document_id == models.Document.id
+    )
 
     # Filter by user_id
     results = results.filter(
-        models.OwnsDocument.user_id == user_id,
-        models.Document.deleted == False
+        models.OwnsDocument.user_id == user_id, models.Document.deleted == False
     )
 
     # Calculate and order by cosine distance
@@ -576,8 +639,11 @@ def search():
 def search_similar_resource():
     data = request.json
     doc_id = data.get("document_id")
-    user_id = data.get("user_id")
-
+    user_id = (
+        db.session.query(models.User.id)
+        .filter(models.User.username == g.user)
+        .first()[0]
+    )
     topic_id = (
         db.session.query(models.Document.topic_id)
         .filter(models.Document.id == doc_id)
@@ -601,7 +667,7 @@ def search_similar_resource():
         .filter(
             models.Document.topic_id.in_(similar_topic_ids),
             models.Document.id != doc_id,
-            models.Document.deleted == False
+            models.Document.deleted == False,
         )
         .all()
     )
@@ -631,6 +697,17 @@ def search_similar_resource():
         ]
 
         if user_id in document_owners:
+            continue
+
+        document_content = (
+            db.session.query(models.Document.content)
+            .filter(models.Document.id == result.existing_document_id)
+            .first()
+        )[0]
+
+        is_duplicate = existsDuplicate(document_content, user_id)
+
+        if is_duplicate:
             continue
 
         user_count = (
@@ -741,7 +818,11 @@ def get_resource_info():
 @token_required
 def get_course():
     document_id = request.args.get("document_id")
-    user_id = (db.session.query(models.User.id).filter(models.User.username == g.user).first()[0])
+    user_id = (
+        db.session.query(models.User.id)
+        .filter(models.User.username == g.user)
+        .first()[0]
+    )
 
     # Find the document with the given document_id
     document = (
@@ -778,11 +859,14 @@ def get_course():
 
         documents = (
             db.session.query(models.Document)
-            .join(models.OwnsDocument, models.Document.id == models.OwnsDocument.document_id)
+            .join(
+                models.OwnsDocument,
+                models.Document.id == models.OwnsDocument.document_id,
+            )
             .filter(
                 models.Document.topic_id == topic.id,
                 models.Document.deleted == False,
-                models.OwnsDocument.user_id == user_id
+                models.OwnsDocument.user_id == user_id,
             )
             .all()
         )
@@ -1007,35 +1091,65 @@ def get_keywords(docs):
 
     return list(keyword_set)
 
+
 def authenticate(username, password):
     user = {}
-    user['username'] = username
-    user['password'] = db.session.query(models.User.password).filter(models.User.username == username).first()[0]
-    user['name'] = db.session.query(models.User.name).filter(models.User.username == username).first()[0]
+    user["username"] = username
+    user["password"] = (
+        db.session.query(models.User.password)
+        .filter(models.User.username == username)
+        .first()[0]
+    )
+    user["name"] = (
+        db.session.query(models.User.name)
+        .filter(models.User.username == username)
+        .first()[0]
+    )
 
-    if sha256_crypt.verify(password, user['password']):
+    if sha256_crypt.verify(password, user["password"]):
         return user
 
 
-@app.route('/login', methods=['POST'])
+def existsDuplicate(content, user_id):
+    documents = db.session.query(models.Document).all()
+    for document in documents:
+        if document.content == content:
+            owns_documents = db.session.query(models.OwnsDocument).all()
+            for owns_document in owns_documents:
+                if (
+                    owns_document.user_id == user_id
+                    and owns_document.document_id == document.id
+                ):
+                    return True
+    return False
+
+
+@app.route("/login", methods=["POST"])
 def login():
     data = request.json
-    if not data or 'username' not in data or 'password' not in data:
+    if not data or "username" not in data or "password" not in data:
         return jsonify({"message": "Missing username or password"}), 400
 
-    username = data['username']
-    password = data['password']
+    username = data["username"]
+    password = data["password"]
 
     user = authenticate(username, password)
 
     if user:
-        token = jwt.encode({'identity': user['username'], 'exp': datetime.utcnow() + timedelta(days=60)}, app.config['SECRET_KEY'], algorithm='HS256')
+        token = jwt.encode(
+            {
+                "identity": user["username"],
+                "exp": datetime.utcnow() + timedelta(days=60),
+            },
+            app.config["SECRET_KEY"],
+            algorithm="HS256",
+        )
         return jsonify({"access_token": token, "name": user["name"]}), 200
     else:
         return jsonify({"message": "Invalid username or password"}), 401
 
 
-@app.route('/register', methods=["POST"])
+@app.route("/register", methods=["POST"])
 def register():
     data = request.json
     name = data.get("name")
@@ -1043,11 +1157,8 @@ def register():
     password = data.get("password")
 
     encrypted_passwored = sha256_crypt.encrypt(password)
-    new_user = models.User(
-        name=name, username=email, password=encrypted_passwored
-    )
+    new_user = models.User(name=name, username=email, password=encrypted_passwored)
     db.session.add(new_user)
     db.session.commit()
 
     return "New user added"
-  
