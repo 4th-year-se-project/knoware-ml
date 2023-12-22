@@ -31,6 +31,8 @@ import jwt
 from datetime import datetime, timedelta
 import subprocess
 
+logging.basicConfig(filename='/home/kalsha/logs/app.log', level=logging.DEBUG)
+
 ffmpeg_path = '/usr/bin'
 os.environ['PATH'] = f'{ffmpeg_path}:{os.environ["PATH"]}'
 
@@ -50,7 +52,7 @@ sentence_model = SentenceTransformer(modelPath)
 kw_model = KeyBERT(model=sentence_model)
 
 #change this to the correct path where your libreoffice is installed
-uno_path = "/Applications/LibreOffice.app/Contents/MacOS"
+uno_path = "/usr/bin"
 os.environ["UNO_PATH"] = uno_path
 
 ALLOWED_EXTENSIONS = {"mp3", "mp4", "mpeg", "mpga", "m4a", "wav", "webm"}
@@ -287,13 +289,19 @@ def embed_pdf():
         return "Embeddings saved in the database."
 
 
-def convert_to_pdf(input_file, output_file):
-    try:
-        subprocess.run(['unoconv', '-f', 'pdf', '-o', output_file, input_file], check=True)
-        print(f"Conversion successful: {input_file} -> {output_file}")
-    except subprocess.CalledProcessError as e:
-        print(f"Error during conversion: {e}")
+#def convert_to_pdf(input_file, output_file):
+#    try:
+#        subprocess.run(['unoconv', '-f', 'pdf', '-o', output_file, input_file], check=True)
+#        logging.info(f"Conversion successful: {input_file} -> {output_file}")
+#    except subprocess.CalledProcessError as e:
+#        logging.debug(f"Error during conversion: {e}")
 
+def convert_to_pdf(input_file, output_directory):
+    try:
+        subprocess.run(['libreoffice', '--headless', '--convert-to', 'pdf:writer_pdf_Export', input_file, '--outdir', output_directory], check=True)
+        logging.info(f"Conversion successful: {input_file} -> {output_directory}")
+    except subprocess.CalledProcessError as e:
+        logging.error(f"Error during conversion: {e}")
 
 @app.route("/embed_pptx", methods=["POST"])
 @token_required
@@ -323,12 +331,12 @@ def embed_pptx():
         file.save(original_filepath)
 
         if user_id == 1:
-            print(f"File extensiojhjhjhjhjn: {os.path.splitext(filename)[-1]}")
+            print(f"File extension: {os.path.splitext(filename)[-1]}")
 
             # Convert to PDF
             pdf_filename = os.path.splitext(filename)[0] + '.pdf'
             pdf_filepath = os.path.join(upload_dir, pdf_filename)
-            convert_to_pdf(original_filepath, pdf_filepath)
+            convert_to_pdf(original_filepath, upload_dir)
 
         # Load and process the PDF content
         documents = loader.load_data(
@@ -500,7 +508,7 @@ def embed_docx():
             # Convert to PDF
             pdf_filename = os.path.splitext(filename)[0] + '.pdf'
             pdf_filepath = os.path.join(upload_dir, pdf_filename)
-            convert_to_pdf(original_filepath, pdf_filepath)
+            convert_to_pdf(original_filepath, upload_dir)
 
         # Load and process the docx content
         documents = loader.load_data(
