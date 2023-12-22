@@ -92,20 +92,27 @@ def token_required(f):
 @app.route("/getPdf", methods=["GET"])
 @token_required
 def serve_pdf():
-    filename = request.args.get("filename")
-
-    user_id = (
-        db.session.query(models.User.id)
-        .filter(models.User.username == g.user)
+    doc_id = request.args.get("document_id")
+    print(doc_id)
+    filename = (
+        db.session.query(models.Document.title)
+        .filter(models.Document.id == doc_id)
         .first()[0]
     )
-    uploaded_dir = os.path.join("uploads", str(user_id))
+
+    owner_id = (
+        db.session.query(models.OwnsDocument.user_id)
+        .filter(models.OwnsDocument.document_id == doc_id)
+        .first()[0]
+    )
+    uploaded_dir = os.path.join("uploads", str(owner_id))
     pdf_directory = os.path.join(os.getcwd(), uploaded_dir)
 
     if not filename.lower().endswith('.pdf'):
         filename = os.path.splitext(filename)[0] + '.pdf'
 
     pdf_file_path = os.path.join(pdf_directory, filename)
+    print(pdf_file_path)
 
     return send_file(pdf_file_path, as_attachment=True, mimetype="application/pdf")
 
@@ -643,8 +650,11 @@ def search():
 def search_similar_resource():
     data = request.json
     doc_id = data.get("document_id")
-    user_id = data.get("user_id")
-
+    user_id = (
+        db.session.query(models.User.id)
+        .filter(models.User.username == g.user)
+        .first()[0]
+    )
     topic_id = (
         db.session.query(models.Document.topic_id)
         .filter(models.Document.id == doc_id)
@@ -698,6 +708,17 @@ def search_similar_resource():
         ]
 
         if user_id in document_owners:
+            continue
+
+        document_content = (
+            db.session.query(models.Document.content)
+            .filter(models.Document.id == result.existing_document_id)
+            .first()
+        )[0]
+
+        is_duplicate = existsDuplicate(document_content, user_id)
+
+        if is_duplicate:
             continue
 
         user_count = (
