@@ -296,13 +296,6 @@ def embed_pdf():
         return "Embeddings saved in the database."
 
 
-#def convert_to_pdf(input_file, output_file):
-#    try:
-#        subprocess.run(['unoconv', '-f', 'pdf', '-o', output_file, input_file], check=True)
-#        logging.info(f"Conversion successful: {input_file} -> {output_file}")
-#    except subprocess.CalledProcessError as e:
-#        logging.debug(f"Error during conversion: {e}")
-
 def convert_to_pdf(input_file, output_directory):
     try:
         subprocess.run(['libreoffice', '--headless', '--convert-to', 'pdf:writer_pdf_Export', input_file, '--outdir', output_directory], check=True)
@@ -337,13 +330,12 @@ def embed_pptx():
         original_filepath = os.path.join(upload_dir, filename)
         file.save(original_filepath)
 
-        if user_id == 1:
-            print(f"File extension: {os.path.splitext(filename)[-1]}")
+        print(f"File extension: {os.path.splitext(filename)[-1]}")
 
-            # Convert to PDF
-            pdf_filename = os.path.splitext(filename)[0] + '.pdf'
-            pdf_filepath = os.path.join(upload_dir, pdf_filename)
-            convert_to_pdf(original_filepath, upload_dir)
+        # Convert to PDF
+        pdf_filename = os.path.splitext(filename)[0] + '.pdf'
+        pdf_filepath = os.path.join(upload_dir, pdf_filename)
+        convert_to_pdf(original_filepath, upload_dir)
 
         # Load and process the PDF content
         documents = loader.load_data(
@@ -509,13 +501,12 @@ def embed_docx():
         original_filepath = os.path.join(upload_dir, filename)
         file.save(original_filepath)
 
-        if user_id == 1:
-            print(f"File extension: {os.path.splitext(filename)[-1]}")
+        print(f"File extension: {os.path.splitext(filename)[-1]}")
 
-            # Convert to PDF
-            pdf_filename = os.path.splitext(filename)[0] + '.pdf'
-            pdf_filepath = os.path.join(upload_dir, pdf_filename)
-            convert_to_pdf(original_filepath, upload_dir)
+        # Convert to PDF
+        pdf_filename = os.path.splitext(filename)[0] + '.pdf'
+        pdf_filepath = os.path.join(upload_dir, pdf_filename)
+        convert_to_pdf(original_filepath, upload_dir)
 
         # Load and process the docx content
         documents = loader.load_data(
