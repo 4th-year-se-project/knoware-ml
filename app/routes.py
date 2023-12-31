@@ -29,6 +29,7 @@ import logging
 from passlib.hash import sha256_crypt
 import jwt
 from datetime import datetime, timedelta
+import subprocess
 
 modelPath = "../models/all-MiniLM-L6-v2"
 model_kwargs = {"device": "cpu"}
@@ -44,6 +45,10 @@ whisper_model = whisper.load_model("small", download_root="../models/whisper")
 
 sentence_model = SentenceTransformer(modelPath)
 kw_model = KeyBERT(model=sentence_model)
+
+#change this to the correct path where your libreoffice is installed
+uno_path = "/Applications/LibreOffice.app/Contents/MacOS"
+os.environ["UNO_PATH"] = uno_path
 
 ALLOWED_EXTENSIONS = {"mp3", "mp4", "mpeg", "mpga", "m4a", "wav", "webm"}
 
@@ -97,6 +102,10 @@ def serve_pdf():
     )
     uploaded_dir = os.path.join("uploads", str(owner_id))
     pdf_directory = os.path.join(os.getcwd(), uploaded_dir)
+
+    if not filename.lower().endswith('.pdf'):
+        filename = os.path.splitext(filename)[0] + '.pdf'
+
     pdf_file_path = os.path.join(pdf_directory, filename)
     print(pdf_file_path)
 
@@ -282,6 +291,14 @@ def embed_pdf():
         return "Embeddings saved in the database."
 
 
+def convert_to_pdf(input_file, output_file):
+    try:
+        subprocess.run(['unoconv', '-f', 'pdf', '-o', output_file, input_file], check=True)
+        print(f"Conversion successful: {input_file} -> {output_file}")
+    except subprocess.CalledProcessError as e:
+        print(f"Error during conversion: {e}")
+
+
 @app.route("/embed_pptx", methods=["POST"])
 @token_required
 def embed_pptx():
@@ -306,12 +323,20 @@ def embed_pptx():
     if file:
         # Securely save the uploaded file
         filename = secure_filename(file.filename)
-        filepath = os.path.join(upload_dir, filename)
-        file.save(filepath)
+        original_filepath = os.path.join(upload_dir, filename)
+        file.save(original_filepath)
+
+        if user_id == 1:
+            print(f"File extensiojhjhjhjhjn: {os.path.splitext(filename)[-1]}")
+
+            # Convert to PDF
+            pdf_filename = os.path.splitext(filename)[0] + '.pdf'
+            pdf_filepath = os.path.join(upload_dir, pdf_filename)
+            convert_to_pdf(original_filepath, pdf_filepath)
 
         # Load and process the PDF content
         documents = loader.load_data(
-            file=Path(filepath)
+            file=Path(original_filepath)
         )  # Implement the PDF loading function
         text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=1000, chunk_overlap=150
@@ -358,6 +383,8 @@ def embed_pptx():
         )
         db.session.add(owns_document)
         db.session.commit()
+
+        os.remove(original_filepath)
 
         return "Embeddings saved in the database."
 
@@ -468,12 +495,20 @@ def embed_docx():
     if file:
         # Securely save the uploaded file
         filename = secure_filename(file.filename)
-        filepath = os.path.join(upload_dir, filename)
-        file.save(filepath)
+        original_filepath = os.path.join(upload_dir, filename)
+        file.save(original_filepath)
+
+        if user_id == 1:
+            print(f"File extension: {os.path.splitext(filename)[-1]}")
+
+            # Convert to PDF
+            pdf_filename = os.path.splitext(filename)[0] + '.pdf'
+            pdf_filepath = os.path.join(upload_dir, pdf_filename)
+            convert_to_pdf(original_filepath, pdf_filepath)
 
         # Load and process the docx content
         documents = loader.load_data(
-            file=Path(filepath)
+            file=Path(original_filepath)
         )  # Implement the docx loading function
 
         document_texts = [document.text for document in documents]
@@ -529,6 +564,8 @@ def embed_docx():
         )
         db.session.add(owns_document)
         db.session.commit()
+
+        os.remove(original_filepath)
 
         return "Embeddings saved in the database."
 
@@ -1102,7 +1139,7 @@ def login():
         token = jwt.encode(
             {
                 "identity": user["username"],
-                "exp": datetime.utcnow() + timedelta(weeks=1),
+                "exp": datetime.utcnow() + timedelta(days=60),
             },
             app.config["SECRET_KEY"],
             algorithm="HS256",

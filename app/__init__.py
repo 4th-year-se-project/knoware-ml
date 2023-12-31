@@ -9,6 +9,11 @@ app.config["SQLALCHEMY_DATABASE_URI"] = SQLALCHEMY_DATABASE_URI
 db = SQLAlchemy(app)
 migrate = Migrate(app, db)
 
-CORS(app)
+CORS(
+    app,
+    supports_credentials=True,
+    allow_headers=["Content-Type", "Authorization"],
+    expose_headers=["Content-Type", "Authorization"],
+)
 
 from app import routes, models
