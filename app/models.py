@@ -63,6 +63,7 @@ class Document(Base):
     ratings = mapped_column(Float, default=5)
     date_created = mapped_column(DateTime, default=datetime.utcnow)
     deleted = mapped_column(Boolean, default=False)
+    comment = mapped_column(Text, default=None)
 
 
 class OwnsDocument(Base):
