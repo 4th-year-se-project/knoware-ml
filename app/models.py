@@ -1,6 +1,6 @@
 from app import db
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import ARRAY, Integer, String, Text, ForeignKey, Float, DateTime, Boolean
+from sqlalchemy import ARRAY, Integer, String, Text, ForeignKey, Float, DateTime, Boolean, Time, Interval
 from sqlalchemy.orm import declarative_base, mapped_column, relationship
 from sqlalchemy import create_engine
 from app.config import SQLALCHEMY_DATABASE_URI
@@ -63,6 +63,7 @@ class Document(Base):
     ratings = mapped_column(Float, default=5)
     date_created = mapped_column(DateTime, default=datetime.utcnow)
     deleted = mapped_column(Boolean, default=False)
+    comment = mapped_column(Text, default=None)
 
 
 class OwnsDocument(Base):
@@ -93,6 +94,8 @@ class Embeddings(Base):
     split_content = mapped_column(Text)
     embedding = mapped_column(Vector(384))
     document_id = mapped_column(ForeignKey("document.id", ondelete="CASCADE"))
+    timestamp = mapped_column(Time)
+    page = mapped_column(Integer)
 
 class QueryLog(Base):
     __tablename__ = "query_logs"

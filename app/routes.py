@@ -30,6 +30,10 @@ from passlib.hash import sha256_crypt
 import jwt
 from datetime import datetime, timedelta
 import subprocess
+from flask import send_from_directory
+from sqlalchemy import func
+from collections import defaultdict 
+import fitz
 
 modelPath = "../models/all-MiniLM-L6-v2"
 model_kwargs = {"device": "cpu"}
@@ -85,10 +89,8 @@ def token_required(f):
 
 
 @app.route("/getPdf", methods=["GET"])
-@token_required
 def serve_pdf():
     doc_id = request.args.get("document_id")
-    print(doc_id)
     filename = (
         db.session.query(models.Document.title)
         .filter(models.Document.id == doc_id)
@@ -107,7 +109,6 @@ def serve_pdf():
         filename = os.path.splitext(filename)[0] + '.pdf'
 
     pdf_file_path = os.path.join(pdf_directory, filename)
-    print(pdf_file_path)
 
     return send_file(pdf_file_path, as_attachment=True, mimetype="application/pdf")
 
@@ -235,18 +236,15 @@ def embed_pdf():
         # Load and process the PDF content
         documents = loader.load_data(
             file=Path(filepath)
-        )  # Implement the PDF loading function
+        ) 
         document_texts = [document.text for document in documents]
+        pages = [document.metadata['page_label'] for document in documents]
         document_text = "".join(document_texts)
         preprocessed_text = preprocess_text(document_text)
         if existsDuplicate(preprocessed_text, user_id):
             return "Duplicate document", 400
-        text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=1000, chunk_overlap=150
-        )
-        docs = text_splitter.split_text(document_text)
-        embeddings = embeddings_model.embed_documents(docs)
-        keywords = get_keywords(docs)
+        embeddings = embeddings_model.embed_documents(document_texts)
+        keywords = get_keywords(document_texts)
 
         stored_document = models.Document(
             title=filename, content=preprocessed_text, keywords=keywords
@@ -262,11 +260,12 @@ def embed_pdf():
         similarity_thread.start()
 
         # Store the embeddings in the database
-        for embedding, doc in zip(embeddings, docs):
+        for embedding, doc, page in zip(embeddings, document_texts, pages):
             stored_embedding = models.Embeddings(
                 split_content=doc,
                 embedding=embedding,
                 document_id=stored_document.id,
+                page=page
             )
             db.session.add(stored_embedding)
         db.session.commit()
@@ -285,8 +284,6 @@ def embed_pdf():
         )
         db.session.add(owns_document)
         db.session.commit()
-
-        print(user_id)
 
         return "Embeddings saved in the database."
 
@@ -326,13 +323,10 @@ def embed_pptx():
         original_filepath = os.path.join(upload_dir, filename)
         file.save(original_filepath)
 
-        if user_id == 1:
-            print(f"File extensiojhjhjhjhjn: {os.path.splitext(filename)[-1]}")
-
-            # Convert to PDF
-            pdf_filename = os.path.splitext(filename)[0] + '.pdf'
-            pdf_filepath = os.path.join(upload_dir, pdf_filename)
-            convert_to_pdf(original_filepath, pdf_filepath)
+        # Convert to PDF
+        pdf_filename = os.path.splitext(filename)[0] + '.pdf'
+        pdf_filepath = os.path.join(upload_dir, pdf_filename)
+        convert_to_pdf(original_filepath, pdf_filepath)
 
         # Load and process the PDF content
         documents = loader.load_data(
@@ -417,17 +411,38 @@ def embed_audio():
 
         # Load and process the audio content
         transcript = whisper_model.transcribe(filepath)
+   
         preprocessed_text = preprocess_text(transcript["text"])
         if existsDuplicate(preprocessed_text, user_id):
             return "Duplicate document", 400
-        text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=1000, chunk_overlap=150
-        )
-        docs = text_splitter.split_text(transcript["text"])
 
-        embeddings = embeddings_model.embed_documents(docs)
+        # Desired time length for each combined segment in seconds
+        desired_combined_segment_length = 30.0
 
-        keywords = get_keywords(docs)
+        # Combine consecutive segments until the desired length is reached
+        docs = []
+        current_doc = {'text': '', 'start': 0.0, 'end': 0.0}
+
+        for segment in transcript['segments']:
+            if segment['start'] - current_doc['start'] <= desired_combined_segment_length:
+                # Concatenate segments
+                current_doc['text'] += ' ' + segment['text']
+                current_doc['end'] = segment['end']
+            else:
+        # Check if the combined segment meets the desired length
+                if current_doc['end'] - current_doc['start'] >= desired_combined_segment_length:
+                    docs.append(current_doc)
+
+        # Start a new combined segment
+                current_doc = {'text': segment['text'], 'start': segment['start'], 'end': segment['end']}
+
+        # Check and add the last combined segment
+        if current_doc['text']:
+            docs.append(current_doc)
+
+        embeddings = embeddings_model.embed_documents([doc['text'] for doc in docs])
+
+        keywords = get_keywords([doc['text'] for doc in docs])
         stored_document = models.Document(
             title=filename, content=preprocessed_text, keywords=keywords
         )
@@ -443,10 +458,15 @@ def embed_audio():
 
         # Store the embeddings in the database
         for embedding, chunk in zip(embeddings, docs):
+            timestamp = timedelta(seconds=chunk['start'])
+            hours, remainder = divmod(timestamp.seconds, 3600)
+            minutes, seconds = divmod(remainder, 60)
+            formatted_timestamp = "{:02}:{:02}:{:02}".format(int(hours), int(minutes), int(seconds))
             stored_embedding = models.Embeddings(
-                split_content=chunk,
+                split_content=chunk['text'],
                 embedding=embedding,
                 document_id=stored_document.id,
+                timestamp=formatted_timestamp,
             )
             db.session.add(stored_embedding)
         db.session.commit()
@@ -622,6 +642,8 @@ def search():
                 "keywords": document.keywords,
                 "course": course.name,
                 "topic": topic.name,
+                "page": embedding.page,
+                "timestamp": embedding.timestamp,
             }
 
     # Convert the results_dict values to a list
@@ -938,7 +960,6 @@ def edit_topic():
         # Get the 'document_id' and 'topic' from the request's query parameters
         document_id = request.args.get("document_id")
         topic = request.args.get("topic")
-        print(topic)
 
         # Find the document with the given document_id
         document = (
@@ -1071,6 +1092,48 @@ def preprocess_text(
 
     return processed_text
 
+def convert_pdf_page_to_image(pdf_path, page_number, output_image_path):
+    # Open the PDF file
+    pdf_document = fitz.open(pdf_path)
+
+    # Get the specified page
+    pdf_page = pdf_document.load_page(page_number - 1)
+
+    # Create an image of the page
+    image = pdf_page.get_pixmap()
+
+    # Save the image to a file
+    image.save(output_image_path)
+
+    # Close the PDF document
+    pdf_document.close()
+
+def token_required(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        token = None
+
+        if "Authorization" in request.headers:
+            auth_header = request.headers["Authorization"]
+            token = (
+                auth_header.split(" ")[1] if auth_header.startswith("Bearer ") else None
+            )
+
+        if not token:
+            return jsonify({"message": "Token is missing"}), 401
+
+        try:
+            data = jwt.decode(token, app.config["SECRET_KEY"], algorithms=["HS256"])
+            g.user = data["identity"]  # Store the user identity in Flask's context 'g'
+        except jwt.ExpiredSignatureError:
+            return jsonify({"message": "Token has expired"}), 401
+        except jwt.InvalidTokenError:
+            return jsonify({"message": "Invalid token"}), 401
+
+        return f(*args, **kwargs)
+
+    return decorated
+
 
 def get_keywords(docs):
     keyword_set = set()
@@ -1162,3 +1225,97 @@ def register():
     db.session.commit()
 
     return "New user added"
+
+@app.route("/dashboard", methods=["GET"])
+def getDashboard():
+    course_data = []
+
+    courses = db.session.query(models.Course).all()
+
+    for course in courses:
+        course_entry = {
+            "id": course.id,
+            "course": course.name,
+            "resources": []
+        }
+
+        for topic in course.children:
+            for document in sorted(topic.children, key=lambda x: x.date_created, reverse=True):
+
+                popularity = (
+                    db.session.query(func.count(models.OwnsDocument.user_id))
+                    .join(models.Document, models.OwnsDocument.document_id == models.Document.id)
+                    .filter(models.Document.content == document.content)
+                    .distinct()
+                    .scalar()
+                )
+                document_entry = {
+                    "id": document.id,
+                    "title": document.title,
+                    "topic": document.topic.name,
+                    "rating": document.ratings,
+                    "popularity": popularity,
+                    "link": document.link,
+                    "comment": document.comment
+                }
+
+                course_entry["resources"].append(document_entry)
+
+        course_data.append(course_entry)
+
+    return jsonify(course_data)
+
+@app.route("/rating", methods=["PUT"])
+def edit_rating():
+    try:
+        document_id = request.args.get("document_id")
+        rating = request.args.get("rating")
+
+        document = (
+            db.session.query(models.Document)
+            .filter(models.Document.id == document_id)
+            .first()
+        )
+
+        if not document:
+            return jsonify({"error": "Document not found"}), 404
+
+        document.ratings = rating
+        db.session.commit()
+
+        return jsonify(
+            {
+                "message": f'Rating for document with ID {document_id} updated to "{rating}"'
+            }
+        )
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500  # 500 Internal Server Error
+
+
+@app.route("/comment", methods=["POST"])
+def add_comment():
+    try:
+        document_id = request.args.get("document_id")
+        comment = request.args.get("comment")
+
+        document = (
+            db.session.query(models.Document)
+            .filter(models.Document.id == document_id)
+            .first()
+        )
+
+        if not document:
+            return jsonify({"error": "Document not found"}), 404
+
+        document.comment = comment
+        db.session.commit()
+
+        return jsonify(
+            {
+                "message": f'Comment added for document with ID {document_id}.'
+            }
+        )
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500  # 500 Internal Server Error
