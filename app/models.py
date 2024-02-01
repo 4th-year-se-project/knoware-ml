@@ -56,6 +56,7 @@ class Document(Base):
     id = mapped_column(Integer, primary_key=True)
     title = mapped_column(String)
     content = mapped_column(Text)
+    type = mapped_column(String)
     topic_id = mapped_column(ForeignKey("topic.id"))
     link = mapped_column(String)
     topic = relationship("Topic", back_populates="children")

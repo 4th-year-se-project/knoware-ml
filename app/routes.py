@@ -34,6 +34,8 @@ from flask import send_from_directory
 from sqlalchemy import func
 from collections import defaultdict 
 import fitz
+import base64
+import json
 
 modelPath = "../models/all-MiniLM-L6-v2"
 model_kwargs = {"device": "cpu"}
@@ -170,6 +172,7 @@ def embed_youtube():
         content=preprocessed_transcript_text,
         keywords=keywords,
         link=video_url,
+        type="youtube",
     )
     db.session.add(stored_document)
     db.session.commit()
@@ -247,7 +250,7 @@ def embed_pdf():
         keywords = get_keywords(document_texts)
 
         stored_document = models.Document(
-            title=filename, content=preprocessed_text, keywords=keywords
+            title=filename, content=preprocessed_text, keywords=keywords, type="pdf"
         )
         db.session.add(stored_document)
         db.session.commit()
@@ -284,6 +287,11 @@ def embed_pdf():
         )
         db.session.add(owns_document)
         db.session.commit()
+
+        filename_without_extension = filename.split('.')[0] + ".png"
+
+        preview_path = os.path.join(upload_dir, filename_without_extension)
+        convert_pdf_page_to_image(filepath, 1, preview_path)
 
         return "Embeddings saved in the database."
 
@@ -345,7 +353,7 @@ def embed_pptx():
         keywords = get_keywords(docs)
 
         stored_document = models.Document(
-            title=filename, content=preprocessed_text, keywords=keywords
+            title=filename, content=preprocessed_text, keywords=keywords, type="ppt"
         )
         db.session.add(stored_document)
         db.session.commit()
@@ -444,7 +452,7 @@ def embed_audio():
 
         keywords = get_keywords([doc['text'] for doc in docs])
         stored_document = models.Document(
-            title=filename, content=preprocessed_text, keywords=keywords
+            title=filename, content=preprocessed_text, keywords=keywords, type="audio"
         )
         db.session.add(stored_document)
         db.session.commit()
@@ -548,7 +556,7 @@ def embed_docx():
         keywords = get_keywords(docs)
 
         stored_document = models.Document(
-            title=filename, content=preprocessed_text, keywords=keywords
+            title=filename, content=preprocessed_text, keywords=keywords, type="doc"
         )
         db.session.add(stored_document)
         db.session.commit()
@@ -601,6 +609,7 @@ def search():
         .filter(models.User.username == g.user)
         .first()[0]
     )
+    upload_dir = os.path.join("uploads", str(user_id))
 
     # Create a dictionary to store the results, indexed by document ID
     results_dict = {}
@@ -632,6 +641,16 @@ def search():
     for result in results:
         embedding, document, course, topic = result
         doc_id = document.id
+
+        if document.type == 'pdf' or document.type == 'ppt' or document.type == 'doc':
+            filepath = os.path.join(upload_dir, document.title)
+            filename_without_extension = document.title.split('.')[0] + "-" + str(embedding.page) + ".png"
+            preview_path = os.path.join(upload_dir, filename_without_extension)
+            convert_pdf_page_to_image(filepath, embedding.page, preview_path)
+
+        with open(preview_path, 'rb') as image_file:
+            base64_image = base64.b64encode(image_file.read()).decode('utf-8')  
+
         # Check if this document ID is already in the results_dict
         if doc_id not in results_dict:
             doc_ids.append(doc_id)
@@ -643,6 +662,7 @@ def search():
                 "course": course.name,
                 "topic": topic.name,
                 "page": embedding.page,
+                "page_image": base64_image if 'base64_image' in locals() or 'base64_image' in globals() else None,
                 "timestamp": embedding.timestamp,
             }
 
