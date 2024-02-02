@@ -648,12 +648,17 @@ def search():
             preview_path = os.path.join(upload_dir, filename_without_extension)
             convert_pdf_page_to_image(filepath, embedding.page, preview_path)
 
-        with open(preview_path, 'rb') as image_file:
-            base64_image = base64.b64encode(image_file.read()).decode('utf-8')  
+            with open(preview_path, 'rb') as image_file:
+                base64_image = base64.b64encode(image_file.read()).decode('utf-8') 
 
+        if embedding.timestamp:
+                timestamp = embedding.timestamp.strftime("%H:%M:%S")
+        else:
+                timestamp = None
         # Check if this document ID is already in the results_dict
         if doc_id not in results_dict:
             doc_ids.append(doc_id)
+            # timestamp = embedding.timestamp.strftime("%H:%M:%S")
             results_dict[doc_id] = {
                 "title": document.title,
                 "content": embedding.split_content,
@@ -663,9 +668,9 @@ def search():
                 "topic": topic.name,
                 "page": embedding.page,
                 "page_image": base64_image if 'base64_image' in locals() or 'base64_image' in globals() else None,
-                "timestamp": embedding.timestamp,
+                "timestamp": timestamp,
             }
-
+  
     # Convert the results_dict values to a list
     response_data = list(results_dict.values())[:5]
 
@@ -803,6 +808,12 @@ def get_resource_info():
     document_id = request.args.get("document_id")
     query = request.args.get("query")
     query_embedding = embeddings_model.embed_query(query)
+    user_id = (
+        db.session.query(models.User.id)
+        .filter(models.User.username == g.user)
+        .first()[0]
+    )
+    upload_dir = os.path.join("uploads", str(user_id))
 
     document = (
         db.session.query(models.Document)
@@ -839,7 +850,22 @@ def get_resource_info():
         if similarity > best_similarity:
             best_similarity = similarity
             best_embedding = embedding.split_content
+            page = embedding.page
 
+            if document.type == 'pdf' or document.type == 'ppt' or document.type == 'doc':
+                filepath = os.path.join(upload_dir, document.title)
+                filename_without_extension = document.title.split('.')[0] + "-" + str(embedding.page) + ".png"
+                preview_path = os.path.join(upload_dir, filename_without_extension)
+                convert_pdf_page_to_image(filepath, embedding.page, preview_path)
+
+                with open(preview_path, 'rb') as image_file:
+                    base64_image = base64.b64encode(image_file.read()).decode('utf-8') 
+
+            if embedding.timestamp:
+                timestamp = embedding.timestamp.strftime("%H:%M:%S")
+            else:
+                timestamp = None 
+                    
     return (
         jsonify(
             {
@@ -848,12 +874,84 @@ def get_resource_info():
                 "link": document.link,
                 "keywords": document.keywords,
                 "content": best_embedding,
-                "topics": [course.name, topic.name]
+                "topics": [course.name, topic.name],
+                "page": page,
+                "page_image": base64_image if 'base64_image' in locals() or 'base64_image' in globals() else None,
+                "timestamp": timestamp,
                 # "topics": [course.name, topic.name, sub_topic.name],
             }
         ),
         200,
     )
+
+@app.route("/get-all-resources", methods=["GET"])
+@token_required
+def get_all_resources():
+    user_id = (
+        db.session.query(models.User.id)
+        .filter(models.User.username == g.user)
+        .first()[0]
+    )
+    upload_dir = os.path.join("uploads", str(user_id))
+
+    # Create a dictionary to store the results, indexed by document ID
+    results_dict = {}
+
+    # Perform a join between Embeddings, Document, Topic, and Course tables
+    results = db.session.query(
+        models.Embeddings, models.Document, models.Topic, models.Course
+    )
+    results = results.join(
+        models.Document, models.Embeddings.document_id == models.Document.id
+    )
+    results = results.join(models.Topic, models.Document.topic_id == models.Topic.id)
+    results = results.join(models.Course, models.Topic.course_id == models.Course.id)
+    results = results.join(
+        models.OwnsDocument, models.OwnsDocument.document_id == models.Document.id
+    )
+
+    # Filter by user_id
+    results = results.filter(
+        models.OwnsDocument.user_id == user_id, models.Document.deleted == False
+    )
+
+    doc_ids = []
+    for result in results:
+        embedding, document, course, topic = result
+        doc_id = document.id
+
+        if document.type == 'pdf' or document.type == 'ppt' or document.type == 'doc':
+            filepath = os.path.join(upload_dir, document.title)
+            filename_without_extension = document.title.split('.')[0] + "-" + str(embedding.page) + ".png"
+            preview_path = os.path.join(upload_dir, filename_without_extension)
+            convert_pdf_page_to_image(filepath, embedding.page, preview_path)
+
+            with open(preview_path, 'rb') as image_file:
+                base64_image = base64.b64encode(image_file.read()).decode('utf-8')  
+
+        # Check if this document ID is already in the results_dict
+        if doc_id not in results_dict:
+            doc_ids.append(doc_id)
+            if embedding.timestamp:
+                timestamp = embedding.timestamp.strftime("%H:%M:%S")
+            else:
+                timestamp = None
+            results_dict[doc_id] = {
+                "title": document.title,
+                "content": embedding.split_content,
+                "doc_id": doc_id,
+                "keywords": document.keywords,
+                "course": course.name,
+                "topic": topic.name,
+                "page": embedding.page,
+                "page_image": base64_image if 'base64_image' in locals() or 'base64_image' in globals() else None,
+                "timestamp": timestamp
+            }
+
+    # Convert the results_dict values to a list
+    response_data = list(results_dict.values())
+
+    return jsonify({"results": response_data}), 200
 
 
 @app.route("/course", methods=["GET"])
