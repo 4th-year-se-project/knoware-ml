@@ -30,12 +30,10 @@ from passlib.hash import sha256_crypt
 import jwt
 from datetime import datetime, timedelta
 import subprocess
-from flask import send_from_directory
 from sqlalchemy import func
 from collections import defaultdict 
 import fitz
 import base64
-import json
 import cv2
 
 modelPath = "../models/all-MiniLM-L6-v2"

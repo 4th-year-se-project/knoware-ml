@@ -1,6 +1,6 @@
 from app import db
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import ARRAY, Integer, String, Text, ForeignKey, Float, DateTime, Boolean, Time, Interval
+from sqlalchemy import ARRAY, Integer, String, Text, ForeignKey, Float, DateTime, Boolean
 from sqlalchemy.orm import declarative_base, mapped_column, relationship
 from sqlalchemy import create_engine
 from app.config import SQLALCHEMY_DATABASE_URI
