@@ -95,7 +95,7 @@ class Embeddings(Base):
     split_content = mapped_column(Text)
     embedding = mapped_column(Vector(384))
     document_id = mapped_column(ForeignKey("document.id", ondelete="CASCADE"))
-    timestamp = mapped_column(Time)
+    timestamp = mapped_column(Float)
     page = mapped_column(Integer)
 
 class QueryLog(Base):
