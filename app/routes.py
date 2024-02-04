@@ -35,6 +35,9 @@ from collections import defaultdict
 import fitz
 import base64
 import cv2
+import requests
+from io import BytesIO
+from PIL import Image
 
 modelPath = "../models/all-MiniLM-L6-v2"
 model_kwargs = {"device": "cpu"}
@@ -130,6 +133,14 @@ def embed_youtube():
     video_url = data.get("video_url")
     yt = YouTube(video_url)
     title = yt.title
+
+    thumbnail_url = yt.thumbnail_url
+    response = requests.get(thumbnail_url)
+    image = Image.open(BytesIO(response.content))
+
+    filename = title + '.jpg'
+    filepath = os.path.join(upload_dir, filename)
+    image.save(filepath)
 
     transcript_text = ""
     try:
@@ -650,10 +661,11 @@ def search():
     for result in results:
         embedding, document, course, topic = result
         doc_id = document.id
+        base64_image = None
 
         # Check if this document ID is already in the results_dict
         if doc_id not in results_dict:
-            doc_ids.append(doc_id)
+            doc_ids.append(doc_id)  
             if embedding.timestamp:
                     timestamp = timedelta(seconds=float(embedding.timestamp))
         
@@ -675,7 +687,7 @@ def search():
                         video_capture = cv2.VideoCapture(filepath)
                         video_capture.set(cv2.CAP_PROP_POS_MSEC, time)
                         success, image = video_capture.read()
-
+                        
                         if success:
                             cv2.imwrite(new_filepath, image)  
                             with open(new_filepath, 'rb') as image_file:
@@ -689,10 +701,17 @@ def search():
                 filename_without_extension = document.title.split('.')[0] + "-" + str(embedding.page) + ".png"
                 preview_path = os.path.join(upload_dir, filename_without_extension)
                 convert_pdf_page_to_image(filepath, embedding.page, preview_path)
-
+                   
                 with open(preview_path, 'rb') as image_file:
-                    base64_image = base64.b64encode(image_file.read()).decode('utf-8') 
-        
+                   base64_image = base64.b64encode(image_file.read()).decode('utf-8') 
+            
+            if document.type == 'youtube':
+                filename = document.title + '.jpg'
+                filepath = os.path.join(upload_dir, filename)
+
+                with open(filepath, 'rb') as image_file:
+                   base64_image = base64.b64encode(image_file.read()).decode('utf-8') 
+
             results_dict[doc_id] = {
                 "title": document.title,
                 "content": embedding.split_content,
@@ -701,7 +720,7 @@ def search():
                 "course": course.name,
                 "topic": topic.name,
                 "page": embedding.page,
-                "page_image": base64_image if 'base64_image' in locals() or 'base64_image' in globals() else None,
+                "page_image": base64_image,
                 "timestamp": formatted_timestamp,
             }
   
@@ -878,6 +897,7 @@ def get_resource_info():
 
     best_embedding = ""
     best_similarity = -1
+    base64_image = None
 
     for embedding in embeddings:
         similarity = cosine_similarity([embedding.embedding], [query_embedding])[0][0]
@@ -893,6 +913,13 @@ def get_resource_info():
 
         with open(preview_path, 'rb') as image_file:
             base64_image = base64.b64encode(image_file.read()).decode('utf-8') 
+
+    if document.type == 'youtube':
+                filename = document.title + '.jpg'
+                filepath = os.path.join(upload_dir, filename)
+
+                with open(filepath, 'rb') as image_file:
+                   base64_image = base64.b64encode(image_file.read()).decode('utf-8') 
 
     if best_embedding.timestamp:
         timestamp = timedelta(seconds=best_embedding.timestamp)
@@ -918,7 +945,8 @@ def get_resource_info():
             if success:
                 cv2.imwrite(new_filepath, image) 
                 with open(new_filepath, 'rb') as image_file:
-                    base64_image = base64.b64encode(image_file.read()).decode('utf-8')  
+                    base64_image = base64.b64encode(image_file.read()).decode('utf-8') 
+             
     else:
         formatted_timestamp = None 
                  
@@ -932,7 +960,7 @@ def get_resource_info():
                 "content": best_embedding.split_content,
                 "topics": [course.name, topic.name],
                 "page": best_embedding.page,
-                "page_image": base64_image if 'base64_image' in locals() or 'base64_image' in globals() else None,
+                "page_image": base64_image,
                 "timestamp": formatted_timestamp,
                 # "topics": [course.name, topic.name, sub_topic.name],
             }
@@ -975,6 +1003,7 @@ def get_all_resources():
     for result in results:
         embedding, document, course, topic = result
         doc_id = document.id
+        base64_image = None
 
         # Check if this document ID is already in the results_dict
         if doc_id not in results_dict:
@@ -985,6 +1014,13 @@ def get_all_resources():
 
                 with open(preview_path, 'rb') as image_file:
                     base64_image = base64.b64encode(image_file.read()).decode('utf-8') 
+
+            if document.type == 'youtube':
+                filename = document.title + '.jpg'
+                filepath = os.path.join(upload_dir, filename)
+
+                with open(filepath, 'rb') as image_file:
+                   base64_image = base64.b64encode(image_file.read()).decode('utf-8')  
 
             if embedding.timestamp:
                     timestamp = timedelta(seconds=embedding.timestamp)
@@ -999,6 +1035,7 @@ def get_all_resources():
                         preview_path = os.path.join(upload_dir, base_name + new_extension)
                         with open(preview_path, 'rb') as image_file:
                             base64_image = base64.b64encode(image_file.read()).decode('utf-8')
+                    
             else:
                     formatted_timestamp = None  
 
@@ -1010,7 +1047,7 @@ def get_all_resources():
                 "course": course.name,
                 "topic": topic.name,
                 "page": embedding.page,
-                "page_image": base64_image if 'base64_image' in locals() or 'base64_image' in globals() else None,
+                "page_image": base64_image,
                 "timestamp": formatted_timestamp
             }
 
