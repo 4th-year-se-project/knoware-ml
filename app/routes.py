@@ -30,12 +30,11 @@ from passlib.hash import sha256_crypt
 import jwt
 from datetime import datetime, timedelta
 import subprocess
-from flask import send_from_directory
 from sqlalchemy import func
 from collections import defaultdict
 import fitz
 import base64
-import json
+import cv2
 
 modelPath = "../models/all-MiniLM-L6-v2"
 model_kwargs = {"device": "cpu"}
@@ -476,17 +475,11 @@ def embed_audio():
 
         # Store the embeddings in the database
         for embedding, chunk in zip(embeddings, docs):
-            timestamp = timedelta(seconds=chunk["start"])
-            hours, remainder = divmod(timestamp.seconds, 3600)
-            minutes, seconds = divmod(remainder, 60)
-            formatted_timestamp = "{:02}:{:02}:{:02}".format(
-                int(hours), int(minutes), int(seconds)
-            )
             stored_embedding = models.Embeddings(
                 split_content=chunk["text"],
                 embedding=embedding,
                 document_id=stored_document.id,
-                timestamp=formatted_timestamp,
+                timestamp=chunk["start"],
             )
             db.session.add(stored_embedding)
         db.session.commit()
@@ -505,6 +498,20 @@ def embed_audio():
         )
         db.session.add(owns_document)
         db.session.commit()
+
+        base_name, extension = os.path.splitext(filename)
+        if extension == ".mp4" or extension == ".mpeg" or extension == ".webm":
+            filepath = os.path.join(upload_dir, filename)
+            new_extension = ".jpg"
+
+            new_filepath = os.path.join(upload_dir, base_name + new_extension)
+
+            video_capture = cv2.VideoCapture(filepath)
+            video_capture.set(cv2.CAP_PROP_POS_MSEC, 0)
+            success, image = video_capture.read()
+
+            if success:
+                cv2.imwrite(new_filepath, image)
 
         return "Audio embeddings saved in the database."
     else:
@@ -654,27 +661,63 @@ def search():
         embedding, document, course, topic = result
         doc_id = document.id
 
-        if document.type == "pdf" or document.type == "ppt" or document.type == "doc":
-            filepath = os.path.join(upload_dir, document.title)
-            filename_without_extension = (
-                document.title.split(".")[0] + "-" + str(embedding.page) + ".png"
-            )
-            preview_path = os.path.join(upload_dir, filename_without_extension)
-            convert_pdf_page_to_image(filepath, embedding.page, preview_path)
-
-            with open(preview_path, "rb") as image_file:
-                base64_image = base64.b64encode(image_file.read()).decode("utf-8")
-
-        if embedding.timestamp:
-            timestamp = embedding.timestamp.strftime("%H:%M:%S")
-        else:
-            timestamp = None
         # Check if this document ID is already in the results_dict
         if doc_id not in results_dict:
             doc_ids.append(doc_id)
-            # timestamp = embedding.timestamp.strftime("%H:%M:%S")
+            if embedding.timestamp:
+                timestamp = timedelta(seconds=float(embedding.timestamp))
+
+                hours, remainder = divmod(timestamp.seconds, 3600)
+                minutes, seconds = divmod(remainder, 60)
+                formatted_timestamp = "{:02}:{:02}:{:02}".format(
+                    int(hours), int(minutes), int(seconds)
+                )
+
+                base_name, extension = os.path.splitext(document.title)
+
+                if extension == ".mp4" or extension == ".mpeg" or extension == ".webm":
+                    filepath = os.path.join(upload_dir, document.title)
+                    new_extension = ".jpg"
+
+                    new_file_name = f"{base_name}-{formatted_timestamp}"
+                    new_filepath = os.path.join(
+                        upload_dir, new_file_name + new_extension
+                    )
+
+                    time = embedding.timestamp * 1000
+
+                    video_capture = cv2.VideoCapture(filepath)
+                    video_capture.set(cv2.CAP_PROP_POS_MSEC, time)
+                    success, image = video_capture.read()
+
+                    if success:
+                        cv2.imwrite(new_filepath, image)
+                        with open(new_filepath, "rb") as image_file:
+                            base64_image = base64.b64encode(image_file.read()).decode(
+                                "utf-8"
+                            )
+
+            else:
+                formatted_timestamp = None
+
+            if (
+                document.type == "pdf"
+                or document.type == "ppt"
+                or document.type == "doc"
+            ):
+                filepath = os.path.join(upload_dir, document.title)
+                filename_without_extension = (
+                    document.title.split(".")[0] + "-" + str(embedding.page) + ".png"
+                )
+                preview_path = os.path.join(upload_dir, filename_without_extension)
+                convert_pdf_page_to_image(filepath, embedding.page, preview_path)
+
+                with open(preview_path, "rb") as image_file:
+                    base64_image = base64.b64encode(image_file.read()).decode("utf-8")
+
             results_dict[doc_id] = {
                 "title": document.title,
+                "type": document.type,
                 "content": embedding.split_content,
                 "doc_id": doc_id,
                 "keywords": document.keywords,
@@ -686,7 +729,7 @@ def search():
                     if "base64_image" in locals() or "base64_image" in globals()
                     else None
                 ),
-                "timestamp": timestamp,
+                "timestamp": formatted_timestamp,
             }
 
     # Convert the results_dict values to a list
@@ -867,28 +910,48 @@ def get_resource_info():
         similarity = cosine_similarity([embedding.embedding], [query_embedding])[0][0]
         if similarity > best_similarity:
             best_similarity = similarity
-            best_embedding = embedding.split_content
-            page = embedding.page
+            best_embedding = embedding
 
-            if (
-                document.type == "pdf"
-                or document.type == "ppt"
-                or document.type == "doc"
-            ):
-                filepath = os.path.join(upload_dir, document.title)
-                filename_without_extension = (
-                    document.title.split(".")[0] + "-" + str(embedding.page) + ".png"
-                )
-                preview_path = os.path.join(upload_dir, filename_without_extension)
-                convert_pdf_page_to_image(filepath, embedding.page, preview_path)
+    if document.type == "pdf" or document.type == "ppt" or document.type == "doc":
+        filepath = os.path.join(upload_dir, document.title)
+        filename_without_extension = (
+            document.title.split(".")[0] + "-" + str(embedding.page) + ".png"
+        )
+        preview_path = os.path.join(upload_dir, filename_without_extension)
+        convert_pdf_page_to_image(filepath, embedding.page, preview_path)
 
-                with open(preview_path, "rb") as image_file:
+        with open(preview_path, "rb") as image_file:
+            base64_image = base64.b64encode(image_file.read()).decode("utf-8")
+
+    if best_embedding.timestamp:
+        timestamp = timedelta(seconds=best_embedding.timestamp)
+
+        hours, remainder = divmod(timestamp.seconds, 3600)
+        minutes, seconds = divmod(remainder, 60)
+        formatted_timestamp = "{:02}:{:02}:{:02}".format(
+            int(hours), int(minutes), int(seconds)
+        )
+
+        base_name, extension = os.path.splitext(document.title)
+        if extension == ".mp4" or extension == ".mpeg" or extension == ".webm":
+            filepath = os.path.join(upload_dir, document.title)
+            new_extension = ".jpg"
+
+            new_file_name = f"{base_name}-{formatted_timestamp}"
+            new_filepath = os.path.join(upload_dir, new_file_name + new_extension)
+
+            time = best_embedding.timestamp * 1000
+
+            video_capture = cv2.VideoCapture(filepath)
+            video_capture.set(cv2.CAP_PROP_POS_MSEC, time)
+            success, image = video_capture.read()
+
+            if success:
+                cv2.imwrite(new_filepath, image)
+                with open(new_filepath, "rb") as image_file:
                     base64_image = base64.b64encode(image_file.read()).decode("utf-8")
-
-            if embedding.timestamp:
-                timestamp = embedding.timestamp.strftime("%H:%M:%S")
-            else:
-                timestamp = None
+    else:
+        formatted_timestamp = None
 
     return (
         jsonify(
@@ -897,15 +960,15 @@ def get_resource_info():
                 "topic_id": document.topic_id,
                 "link": document.link,
                 "keywords": document.keywords,
-                "content": best_embedding,
+                "content": best_embedding.split_content,
                 "topics": [course.name, topic.name],
-                "page": page,
+                "page": best_embedding.page,
                 "page_image": (
                     base64_image
                     if "base64_image" in locals() or "base64_image" in globals()
                     else None
                 ),
-                "timestamp": timestamp,
+                "timestamp": formatted_timestamp,
                 # "topics": [course.name, topic.name, sub_topic.name],
             }
         ),
@@ -949,24 +1012,40 @@ def get_all_resources():
         embedding, document, course, topic = result
         doc_id = document.id
 
-        if document.type == "pdf" or document.type == "ppt" or document.type == "doc":
-            filepath = os.path.join(upload_dir, document.title)
-            filename_without_extension = (
-                document.title.split(".")[0] + "-" + str(embedding.page) + ".png"
-            )
-            preview_path = os.path.join(upload_dir, filename_without_extension)
-            convert_pdf_page_to_image(filepath, embedding.page, preview_path)
-
-            with open(preview_path, "rb") as image_file:
-                base64_image = base64.b64encode(image_file.read()).decode("utf-8")
-
         # Check if this document ID is already in the results_dict
         if doc_id not in results_dict:
             doc_ids.append(doc_id)
+            if (
+                document.type == "pdf"
+                or document.type == "ppt"
+                or document.type == "doc"
+            ):
+                filename = document.title.split(".")[0] + ".png"
+                preview_path = os.path.join(upload_dir, filename)
+
+                with open(preview_path, "rb") as image_file:
+                    base64_image = base64.b64encode(image_file.read()).decode("utf-8")
+
             if embedding.timestamp:
-                timestamp = embedding.timestamp.strftime("%H:%M:%S")
+                timestamp = timedelta(seconds=embedding.timestamp)
+
+                hours, remainder = divmod(timestamp.seconds, 3600)
+                minutes, seconds = divmod(remainder, 60)
+                formatted_timestamp = "{:02}:{:02}:{:02}".format(
+                    int(hours), int(minutes), int(seconds)
+                )
+
+                base_name, extension = os.path.splitext(document.title)
+                if extension == ".mp4" or extension == ".mpeg" or extension == ".webm":
+                    new_extension = ".jpg"
+                    preview_path = os.path.join(upload_dir, base_name + new_extension)
+                    with open(preview_path, "rb") as image_file:
+                        base64_image = base64.b64encode(image_file.read()).decode(
+                            "utf-8"
+                        )
             else:
-                timestamp = None
+                formatted_timestamp = None
+
             results_dict[doc_id] = {
                 "title": document.title,
                 "type": document.type,
@@ -981,7 +1060,7 @@ def get_all_resources():
                     if "base64_image" in locals() or "base64_image" in globals()
                     else None
                 ),
-                "timestamp": timestamp,
+                "timestamp": formatted_timestamp,
             }
 
     # Convert the results_dict values to a list
