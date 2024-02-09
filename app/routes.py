@@ -2,7 +2,7 @@ from functools import wraps
 import os
 import time
 from app import app, db, models
-from flask import jsonify, request, send_file, g
+from flask import jsonify, request, send_file, g, send_from_directory
 from llama_hub.youtube_transcript import YoutubeTranscriptReader
 from youtube_transcript_api._errors import (
     NoTranscriptFound,
@@ -91,6 +91,20 @@ def token_required(f):
 
     return decorated
 
+@app.route('/getmedia/<int:doc_id>/<path:filename>', methods=["GET", "OPTIONS"])
+def serve_media(doc_id, filename):
+    #doc_id = request.args.get('doc_id')
+    if doc_id is None:
+        return "Missing 'doc_id' parameter", 400
+
+    user_id = (
+        db.session.query(models.OwnsDocument.user_id)
+        .filter(models.OwnsDocument.document_id == doc_id)
+        .first()[0]
+    )
+    uploaded_dir = os.path.join("uploads", str(user_id))
+    print(filename)
+    return send_from_directory(uploaded_dir, filename)
 
 @app.route("/getPdf", methods=["GET"])
 def serve_pdf():
@@ -133,6 +147,7 @@ def embed_youtube():
     video_url = data.get("video_url")
     yt = YouTube(video_url)
     title = yt.title
+    yt_length =  yt.length
 
     thumbnail_url = yt.thumbnail_url
     response = requests.get(thumbnail_url)
@@ -145,6 +160,7 @@ def embed_youtube():
     transcript_text = ""
     try:
         documents = loader.load_data(ytlinks=[video_url])
+        print(documents)
         transcript_text = documents[0].text
     except NoTranscriptFound as e:
         # Handle the case where no transcript is found
@@ -176,6 +192,11 @@ def embed_youtube():
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=150)
     docs = text_splitter.split_text(transcript_text)
     embeddings = embeddings_model.embed_documents(docs)
+
+    num_embeddings = len(embeddings)
+    time_interval = yt_length / num_embeddings
+    timestamps = [i * time_interval for i in range(num_embeddings)]
+    
     keywords = get_keywords(docs)
     stored_document = models.Document(
         title=title,
@@ -194,11 +215,12 @@ def embed_youtube():
     )
     similarity_thread.start()
 
-    for embedding, doc in zip(embeddings, docs):
+    for embedding, doc, timestamp in zip(embeddings, docs, timestamps):
         stored_embedding = models.Embeddings(
             split_content=doc,
             embedding=embedding,
             document_id=stored_document.id,
+            timestamp=timestamp
         )
         db.session.add(stored_embedding)
     db.session.commit()
@@ -921,6 +943,7 @@ def get_resource_info():
     best_embedding = ""
     best_similarity = -1
     base64_image = None
+    file_url = None
 
     for embedding in embeddings:
         similarity = cosine_similarity([embedding.embedding], [query_embedding])[0][0]
@@ -938,6 +961,8 @@ def get_resource_info():
 
         with open(preview_path, "rb") as image_file:
             base64_image = base64.b64encode(image_file.read()).decode("utf-8")
+        
+        #file_url = f'/getmedia/{user_id}/{document.title}?timestamp={embedding.timestamp}'
 
     if document.type == "youtube":
         filename = document.title + ".jpg"
@@ -973,6 +998,9 @@ def get_resource_info():
                 cv2.imwrite(new_filepath, image)
                 with open(new_filepath, "rb") as image_file:
                     base64_image = base64.b64encode(image_file.read()).decode("utf-8")
+        url = "http://localhost:8080"
+        file_url = f'{url}/getmedia/{document.id}/{document.title}'
+        print(file_url)
 
     else:
         formatted_timestamp = None
@@ -989,6 +1017,8 @@ def get_resource_info():
                 "page": best_embedding.page,
                 "page_image": base64_image,
                 "timestamp": formatted_timestamp,
+                "type": document.type,
+                "file_url": file_url
                 # "topics": [course.name, topic.name, sub_topic.name],
             }
         ),
