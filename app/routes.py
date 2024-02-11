@@ -757,6 +757,135 @@ def search():
     return {"results": response_data}, 200
 
 
+@app.route("/search-recommend", methods=["POST"])
+@token_required
+def search_recommendation():
+    data = request.json
+    query = data.get("query")
+
+    query_embedding = embeddings_model.embed_query(query)
+    user_id = (
+        db.session.query(models.User.id)
+        .filter(models.User.username == g.user)
+        .first()[0]
+    )
+
+    results_dict = {}
+
+    results = db.session.query(
+        models.Embeddings, models.Document, models.Topic, models.Course, models.OwnsDocument
+    )
+    results = results.join(
+        models.Document, models.Embeddings.document_id == models.Document.id
+    )
+    results = results.join(models.Topic, models.Document.topic_id == models.Topic.id)
+    results = results.join(models.Course, models.Topic.course_id == models.Course.id)
+    results = results.join(
+        models.OwnsDocument, models.OwnsDocument.document_id == models.Document.id
+    )
+
+    # Filter others resources
+    results = results.filter(
+        models.OwnsDocument.user_id != user_id, models.Document.deleted == False
+    )
+
+    # Calculate and order by cosine distance
+    results = results.order_by(
+        models.Embeddings.embedding.cosine_distance(query_embedding)
+    )
+
+    print(results)
+
+    doc_ids = []
+    for result in results:
+        embedding, document, course, topic, owns_document = result
+        doc_id = document.id
+        base64_image = None
+        id=owns_document.user_id
+
+        upload_dir = os.path.join("uploads", str(id))
+
+        # Check if this document ID is already in the results_dict
+        if doc_id not in results_dict:
+            
+            doc_ids.append(doc_id)
+            if embedding.timestamp:
+                timestamp = timedelta(seconds=float(embedding.timestamp))
+
+                hours, remainder = divmod(timestamp.seconds, 3600)
+                minutes, seconds = divmod(remainder, 60)
+                formatted_timestamp = "{:02}:{:02}:{:02}".format(
+                    int(hours), int(minutes), int(seconds)
+                )
+
+                base_name, extension = os.path.splitext(document.title)
+
+                if extension == ".mp4" or extension == ".mpeg" or extension == ".webm":
+                    filepath = os.path.join(upload_dir, document.title)
+                    new_extension = ".jpg"
+
+                    new_file_name = f"{base_name}-{formatted_timestamp}"
+                    new_filepath = os.path.join(
+                        upload_dir, new_file_name + new_extension
+                    )
+
+                    time = embedding.timestamp * 1000
+
+                    video_capture = cv2.VideoCapture(filepath)
+                    video_capture.set(cv2.CAP_PROP_POS_MSEC, time)
+                    success, image = video_capture.read()
+
+                    if success:
+                        cv2.imwrite(new_filepath, image)
+                        with open(new_filepath, "rb") as image_file:
+                            base64_image = base64.b64encode(image_file.read()).decode(
+                                "utf-8"
+                            )
+
+            else:
+                formatted_timestamp = None
+
+            if (
+                document.type == "pdf"
+                or document.type == "ppt"
+                or document.type == "doc"
+            ):
+                filepath = os.path.join(upload_dir, document.title)
+                filename_without_extension = (
+                    document.title.split(".")[0] + "-" + str(embedding.page) + ".png"
+                )
+                preview_path = os.path.join(upload_dir, filename_without_extension)
+                convert_pdf_page_to_image(filepath, embedding.page, preview_path)
+
+                with open(preview_path, "rb") as image_file:
+                    base64_image = base64.b64encode(image_file.read()).decode("utf-8")
+
+            if document.type == "youtube":
+                filename = document.title + ".jpg"
+                filepath = os.path.join(upload_dir, filename)
+
+                with open(filepath, "rb") as image_file:
+                    base64_image = base64.b64encode(image_file.read()).decode("utf-8")
+
+            results_dict[doc_id] = {
+                "title": document.title,
+                "type": document.type,
+                "content": embedding.split_content,
+                "doc_id": doc_id,
+                "keywords": document.keywords,
+                "course": course.name,
+                "topic": topic.name,
+                "page": embedding.page,
+                "page_image": base64_image,
+                "timestamp": formatted_timestamp,
+            }
+
+    # Convert the results_dict values to a list
+    response_data = list(results_dict.values())[:5]
+
+    return {"results": response_data}, 200
+
+
 @app.route("/recommend", methods=["POST"])
 @token_required
 def search_similar_resource():
