@@ -636,6 +636,7 @@ def search():
     filter_file_format = data.get("file_format")
     filter_date = data.get("date")
     filter_course = data.get("course")
+    filter_label = data.get("label")
 
     query_embedding = embeddings_model.embed_query(query)
     user_id = (
@@ -673,6 +674,9 @@ def search():
 
     if(filter_file_format):
         results = results.filter(models.Document.type == filter_file_format)
+
+    if(filter_label):
+        results = results.filter(models.Document.label == filter_label)
 
     if(filter_date):
         current_date = datetime.now()
