@@ -30,6 +30,8 @@ from passlib.hash import sha256_crypt
 import jwt
 from datetime import datetime, timedelta
 import subprocess
+from sqlalchemy import func
+from collections import defaultdict
 
 logging.basicConfig(filename='/home/kalsha/logs/app.log', level=logging.DEBUG)
 
@@ -1164,3 +1166,102 @@ def register():
     db.session.commit()
 
     return "New user added"
+
+
+@app.route("/dashboard", methods=["GET"])
+def getDashboard():
+    course_data = []
+    processed_content = defaultdict(set)
+
+    courses = db.session.query(models.Course).all()
+
+    for course in courses:
+        course_entry = {
+            "id": course.id,
+            "course": course.name,
+            "resources": []
+        }
+
+        for topic in course.children:
+            for document in sorted(topic.children, key=lambda x: x.date_created, reverse=True):
+                if document.content not in processed_content[course.id]:
+                    popularity = (
+                        db.session.query(func.count(models.OwnsDocument.user_id))
+                        .join(models.Document, models.OwnsDocument.document_id == models.Document.id)
+                        .filter(models.Document.content == document.content)
+                        .distinct()
+                        .scalar()
+                    )
+                    document_entry = {
+                        "id": document.id,
+                        "title": document.title,
+                        "topic": document.topic.name,
+                        "rating": document.ratings,
+                        "popularity": popularity,
+                        "link": document.link,
+                        "comment": document.comment
+                    }
+
+                    course_entry["resources"].append(document_entry)
+                    processed_content[course.id].add(document.content)
+
+        course_data.append(course_entry)
+
+    return jsonify(course_data)
+
+
+@app.route("/rating", methods=["PUT"])
+def edit_rating():
+    try:
+        document_id = request.args.get("document_id")
+        rating = request.args.get("rating")
+
+        document = (
+            db.session.query(models.Document)
+            .filter(models.Document.id == document_id)
+            .first()
+        )
+
+        if not document:
+            return jsonify({"error": "Document not found"}), 404
+
+        document.ratings = rating
+        db.session.commit()
+
+        return jsonify(
+            {
+                "message": f'Rating for document with ID {document_id} updated to "{rating}"'
+            }
+        )
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500  # 500 Internal Server Error
+
+
+@app.route("/comment", methods=["POST"])
+def add_comment():
+    try:
+        document_id = request.args.get("document_id")
+        comment = request.args.get("comment")
+
+        document = (
+            db.session.query(models.Document)
+            .filter(models.Document.id == document_id)
+            .first()
+        )
+
+        if not document:
+            return jsonify({"error": "Document not found"}), 404
+
+        document.comment = comment
+        db.session.commit()
+
+        return jsonify(
+            {
+                "message": f'Comment added for document with ID {document_id}.'
+            }
+        )
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500  # 500 Internal Server Error
+
