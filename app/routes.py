@@ -1018,6 +1018,7 @@ def get_resource_info():
                 "page": best_embedding.page,
                 "page_image": base64_image,
                 "timestamp": formatted_timestamp,
+                "label": document.label,
                 # "topics": [course.name, topic.name, sub_topic.name],
             }
         ),
@@ -1115,6 +1116,7 @@ def get_all_resources():
                 "page": embedding.page,
                 "page_image": base64_image,
                 "timestamp": formatted_timestamp,
+                "label": document.label,
             }
 
     # Convert the results_dict values to a list
@@ -1621,3 +1623,31 @@ def filter_type():
     course_list = [course.name for course in courses]
 
     return jsonify({"topics": course_list}), 200
+
+
+@app.route("/update-label", methods=["PUT"])
+def update_label():
+    try:
+        document_id = request.args.get("document_id")
+        label = request.args.get("label")
+
+        document = (
+            db.session.query(models.Document)
+            .filter(models.Document.id == document_id)
+            .first()
+        )
+
+        if not document:
+            return jsonify({"error": "Document not found"}), 404
+
+        document.label = label
+        db.session.commit()
+
+        return jsonify(
+            {
+                "message": f'Label for document with ID {document_id} updated to "{label}"'
+            }
+        )
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500  # 500 Internal Server Error
