@@ -1034,15 +1034,8 @@ def search_similar_resource():
             or recommending_doc_type == "ppt"
             or recommending_doc_type == "doc"
         ):
-            filepath = os.path.join(upload_dir, recommending_doc_title)
-            filename_without_extension = (
-                recommending_doc_title.split(".")[0]
-                + "-"
-                + str(embedding.page)
-                + ".png"
-            )
-            preview_path = os.path.join(upload_dir, filename_without_extension)
-            convert_pdf_page_to_image(filepath, embedding.page, preview_path)
+            filename = recommending_doc_title.split(".")[0] + ".png"
+            preview_path = os.path.join(upload_dir, filename)
 
             with open(preview_path, "rb") as image_file:
                 base64_image = base64.b64encode(image_file.read()).decode("utf-8")
@@ -1056,7 +1049,7 @@ def search_similar_resource():
 
         results_dict[existing_doc_id] = {
             "document_title": recommending_doc_title,
-            "doc_type": recommending_doc_type,
+            "type": recommending_doc_type,
             "content": embedding.split_content,
             "document_owner": document_owners[0],
             "document_id": result.existing_document_id,
