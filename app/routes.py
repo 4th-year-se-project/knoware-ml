@@ -929,6 +929,15 @@ def search_similar_resource():
         if user_id in document_owners:
             continue
 
+        document_owner_id = (
+            db.session.query(models.OwnsDocument.user_id)
+            .filter(
+                models.OwnsDocument.user_id != user_id,
+                models.OwnsDocument.document_id == result.existing_document_id,
+            )
+            .first()
+        )[0]
+
         document_content = (
             db.session.query(models.Document.content)
             .filter(models.Document.id == result.existing_document_id)
@@ -973,11 +982,18 @@ def search_similar_resource():
             .filter(models.Embeddings.document_id == existing_doc_id)
             .first()
         )
+        course_id = (
+            db.session.query(models.Topic.course_id)
+            .filter(models.Topic.id == resource_topic.id)
+            .first()[0]
+        )
+        course_name = (
+            db.session.query(models.Course.name)
+            .filter(models.Course.id == course_id)
+            .first()[0]
+        )
 
-        course_id = db.session.query(models.Topic.course_id).filter(models.Topic.id == resource_topic.id).first()[0]
-        course_name = db.session.query(models.Course.name).filter(models.Course.id == course_id).first()[0]
-
-        upload_dir = os.path.join("uploads", str(document_owners[0]))
+        upload_dir = os.path.join("uploads", str(document_owner_id))
 
         if embedding.timestamp:
             timestamp = timedelta(seconds=float(embedding.timestamp))
@@ -1057,8 +1073,7 @@ def search_similar_resource():
             * (recommending_doc_ratings / 5),
         }
 
-
-    response_data = list(results_dict.values())
+    response_data = list(results_dict.values())[:5]
 
     return {"results": response_data}, 200
 
