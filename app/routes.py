@@ -91,9 +91,10 @@ def token_required(f):
 
     return decorated
 
-@app.route('/getmedia/<int:doc_id>/<path:filename>', methods=["GET", "OPTIONS"])
+
+@app.route("/getmedia/<int:doc_id>/<path:filename>", methods=["GET", "OPTIONS"])
 def serve_media(doc_id, filename):
-    #doc_id = request.args.get('doc_id')
+    # doc_id = request.args.get('doc_id')
     if doc_id is None:
         return "Missing 'doc_id' parameter", 400
 
@@ -105,6 +106,7 @@ def serve_media(doc_id, filename):
     uploaded_dir = os.path.join("uploads", str(user_id))
     print(filename)
     return send_from_directory(uploaded_dir, filename)
+
 
 @app.route("/getPdf", methods=["GET"])
 def serve_pdf():
@@ -147,7 +149,7 @@ def embed_youtube():
     video_url = data.get("video_url")
     yt = YouTube(video_url)
     title = yt.title
-    yt_length =  yt.length
+    yt_length = yt.length
 
     thumbnail_url = yt.thumbnail_url
     response = requests.get(thumbnail_url)
@@ -196,7 +198,7 @@ def embed_youtube():
     num_embeddings = len(embeddings)
     time_interval = yt_length / num_embeddings
     timestamps = [i * time_interval for i in range(num_embeddings)]
-    
+
     keywords = get_keywords(docs)
     stored_document = models.Document(
         title=title,
@@ -220,7 +222,7 @@ def embed_youtube():
             split_content=doc,
             embedding=embedding,
             document_id=stored_document.id,
-            timestamp=timestamp
+            timestamp=timestamp,
         )
         db.session.add(stored_embedding)
     db.session.commit()
@@ -761,6 +763,7 @@ def search():
                 "type": document.type,
                 "content": embedding.split_content,
                 "doc_id": doc_id,
+                "embedding_id": embedding.id,
                 "keywords": document.keywords,
                 "course": course.name,
                 "topic": topic.name,
@@ -961,8 +964,8 @@ def get_resource_info():
 
         with open(preview_path, "rb") as image_file:
             base64_image = base64.b64encode(image_file.read()).decode("utf-8")
-        
-        #file_url = f'/getmedia/{user_id}/{document.title}?timestamp={embedding.timestamp}'
+
+        # file_url = f'/getmedia/{user_id}/{document.title}?timestamp={embedding.timestamp}'
 
     if document.type == "youtube":
         filename = document.title + ".jpg"
@@ -999,7 +1002,7 @@ def get_resource_info():
                 with open(new_filepath, "rb") as image_file:
                     base64_image = base64.b64encode(image_file.read()).decode("utf-8")
         url = "http://localhost:8080"
-        file_url = f'{url}/getmedia/{document.id}/{document.title}'
+        file_url = f"{url}/getmedia/{document.id}/{document.title}"
         print(file_url)
 
     else:
@@ -1110,6 +1113,7 @@ def get_all_resources():
                 "type": document.type,
                 "content": embedding.split_content,
                 "doc_id": doc_id,
+                "embedding_id": embedding.id,
                 "keywords": document.keywords,
                 "course": course.name,
                 "topic": topic.name,
@@ -1204,6 +1208,35 @@ def get_course():
             topic_data["documents"].append(document_data)
 
         course_data["topics"].append(topic_data)
+
+    return jsonify(course_data)
+
+
+@app.route("/courses", methods=["GET"])
+def get_courses():
+    courses = db.session.query(models.Course).all()
+
+    # courses = models.Course.query.all()
+    course_data = []
+
+    for course in courses:
+        topic_data = []
+        topics = (
+            db.session.query(models.Topic)
+            .filter(models.Topic.course_id == course.id)
+            .all()
+        )
+        for topic in topics:
+            topic_data.append(topic.name)
+
+        course_data.append(
+            {
+                "id": course.id,
+                "courseName": course.name,
+                "courseCode": course.code,
+                "topics": topic_data,
+            }
+        )
 
     return jsonify(course_data)
 
@@ -1530,7 +1563,6 @@ def getDashboard():
             for document in sorted(
                 topic.children, key=lambda x: x.date_created, reverse=True
             ):
-
                 popularity = (
                     db.session.query(func.count(models.OwnsDocument.user_id))
                     .join(
@@ -1607,6 +1639,151 @@ def add_comment():
         return jsonify(
             {"message": f"Comment added for document with ID {document_id}."}
         )
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500  # 500 Internal Server Error
+
+
+@app.route("/add_embedding_comment", methods=["POST"])
+@token_required
+def add_embedding_comment():
+    try:
+        document_id = request.args.get("document_id")
+        embedding_id = request.args.get("embedding_id")
+        comment = request.args.get("comment")
+
+        embedding = (
+            db.session.query(models.Embeddings)
+            .filter(
+                models.Embeddings.document_id == document_id,
+                models.Embeddings.id == embedding_id,
+            )
+            .first()
+        )
+
+        if not embedding:
+            return jsonify({"error": "Embedding not found"}), 404
+
+        embedding.comment = comment
+        db.session.commit()
+
+        return jsonify(
+            {"message": f"Comment added for document with ID {document_id}."}
+        )
+
+    except Exception as e:
+        print(f"Error: {e}")
+        return jsonify({"error": str(e)}), 500  # 500 Internal Server Error
+
+
+@app.route("/get_all_comments", methods=["GET"])
+@token_required
+def get_all_comments():
+    try:
+        all_comments = []
+        document_id = request.args.get("document_id")
+
+        document = (
+            db.session.query(models.Document)
+            .filter(
+                models.Document.id == document_id,
+            )
+            .first()
+        )
+        if not document:
+            return jsonify({"error": "Document not found"}), 404
+
+        if document.comment:
+            document_comment = {
+                "comment": document.comment,
+                "timestamp": None,  # or use a different timestamp if available
+                "is_lecturer_comment": True,
+                "page_number": None,  # Adjust this if you have page numbers for lecturer comments
+            }
+
+            all_comments.append(document_comment)
+
+        embeddings_comments = (
+            db.session.query(models.Embeddings).filter_by(document_id=document_id).all()
+        )
+
+        for embedding in embeddings_comments:
+            page = None
+            formatted_timestamp = None
+            if embedding.comment:
+                if embedding.timestamp:
+                    timestamp = timedelta(seconds=embedding.timestamp)
+                    hours, remainder = divmod(timestamp.seconds, 3600)
+                    minutes, seconds = divmod(remainder, 60)
+                    formatted_timestamp = "{:02}:{:02}:{:02}".format(
+                        int(hours), int(minutes), int(seconds)
+                    )
+                if embedding.page:
+                    page = embedding.page
+
+                all_comments.append(
+                    {
+                        "comment": embedding.comment,
+                        "timestamp": formatted_timestamp,
+                        "is_lecturer_comment": False,
+                        "page_number": page,
+                    }
+                )
+
+        return jsonify({"comments": all_comments})
+
+    except Exception as e:
+        print(f"Error: {e}")
+        return jsonify({"error": str(e)}), 500  # 500 Internal Server Error
+
+
+@app.route("/course", methods=["POST"])
+def handle_course():
+    try:
+        data = request.json
+        courses = data.get("courses")
+
+        # course_name = data.get('courseName')
+        # course_code = data.get('courseCode')
+        # topics = data.get('topics', [])
+
+        # new_course = models.Course(name=course_name, code=course_code)
+
+        # for topic_data in topics:
+        #     topic_name = topic_data.get('topicName')
+        #     subtopics = topic_data.get('subtopics', [])
+
+        #     # Create a new Topic instance
+        #     new_topic = models.Topic(name=topic_name)
+        #     new_course.topics.append(new_topic)
+
+        #     # # Add subtopics to the new topic
+        #     # for subtopic_data in subtopics:
+        #     #     subtopic_name = subtopic_data.get('subtopicName')
+        #     #     new_subtopic = Subtopic(name=subtopic_name)
+        #     #     new_topic.subtopics.append(new_subtopic)
+
+        # db.session.add(new_course)
+        # db.session.commit()
+
+        for course_data in courses:
+            course = models.Course(
+                name=course_data["courseName"], code=course_data["courseCode"]
+            )
+            db.session.add(course)
+
+            # Iterate through the topics within each course and create Topics with Subtopics as children
+            for topic_data in course_data["topics"]:
+                topic = models.Topic(name=topic_data["topicName"])
+                course.children.append(topic)
+
+                db.session.add(topic)
+
+                topic_embedding = embeddings_model.embed_query(topic.name)
+                topic.embedding = topic_embedding
+
+        db.session.commit()
+        return jsonify(message="Course details added successfully")
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500  # 500 Internal Server Error

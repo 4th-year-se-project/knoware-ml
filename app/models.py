@@ -97,6 +97,7 @@ class Embeddings(Base):
     document_id = mapped_column(ForeignKey("document.id", ondelete="CASCADE"))
     timestamp = mapped_column(Float)
     page = mapped_column(Integer)
+    comment = mapped_column(Text, default=None)
 
 class QueryLog(Base):
     __tablename__ = "query_logs"
