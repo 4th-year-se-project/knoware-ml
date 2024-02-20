@@ -757,50 +757,153 @@ def search():
     return {"results": response_data}, 200
 
 
-@app.route("/recommend", methods=["POST"])
+@app.route("/search-recommend", methods=["POST"])
 @token_required
-def search_similar_resource():
+def search_recommendation():
     data = request.json
-    doc_id = data.get("document_id")
+    query = data.get("query")
+
+    query_embedding = embeddings_model.embed_query(query)
     user_id = (
         db.session.query(models.User.id)
         .filter(models.User.username == g.user)
         .first()[0]
     )
-    topic_id = (
-        db.session.query(models.Document.topic_id)
-        .filter(models.Document.id == doc_id)
-        .first()
-    )[0]
-    course_id = (
-        db.session.query(models.Topic.course_id)
-        .filter(models.Topic.id == topic_id)
-        .first()
-    )[0]
 
-    similar_topic_ids = (
-        db.session.query(models.Topic.id)
-        .filter(models.Topic.course_id == course_id)
-        .all()
-    )
-    similar_topic_ids = [topic_id for (topic_id,) in similar_topic_ids]
+    results_dict = {}
 
-    similar_topic_docs = (
-        db.session.query(models.Document.id)
-        .filter(
-            models.Document.topic_id.in_(similar_topic_ids),
-            models.Document.id != doc_id,
-            models.Document.deleted == False,
-        )
-        .all()
+    results = db.session.query(
+        models.Embeddings,
+        models.Document,
+        models.Topic,
+        models.Course,
+        models.OwnsDocument,
     )
-    similar_topic_docs = [document_id for (document_id,) in similar_topic_docs]
+    results = results.join(
+        models.Document, models.Embeddings.document_id == models.Document.id
+    )
+    results = results.join(models.Topic, models.Document.topic_id == models.Topic.id)
+    results = results.join(models.Course, models.Topic.course_id == models.Course.id)
+    results = results.join(
+        models.OwnsDocument, models.OwnsDocument.document_id == models.Document.id
+    )
+
+    # Filter others resources
+    results = results.filter(
+        models.OwnsDocument.user_id != user_id, models.Document.deleted == False
+    )
+
+    # Calculate and order by cosine distance
+    results = results.order_by(
+        models.Embeddings.embedding.cosine_distance(query_embedding)
+    )
+
+    print(results)
+
+    doc_ids = []
+    for result in results:
+        embedding, document, course, topic, owns_document = result
+        doc_id = document.id
+        base64_image = None
+        id = owns_document.user_id
+
+        upload_dir = os.path.join("uploads", str(id))
+
+        # Check if this document ID is already in the results_dict
+        if doc_id not in results_dict:
+            doc_ids.append(doc_id)
+            if embedding.timestamp:
+                timestamp = timedelta(seconds=float(embedding.timestamp))
+
+                hours, remainder = divmod(timestamp.seconds, 3600)
+                minutes, seconds = divmod(remainder, 60)
+                formatted_timestamp = "{:02}:{:02}:{:02}".format(
+                    int(hours), int(minutes), int(seconds)
+                )
+
+                base_name, extension = os.path.splitext(document.title)
+
+                if extension == ".mp4" or extension == ".mpeg" or extension == ".webm":
+                    filepath = os.path.join(upload_dir, document.title)
+                    new_extension = ".jpg"
+
+                    new_file_name = f"{base_name}-{formatted_timestamp}"
+                    new_filepath = os.path.join(
+                        upload_dir, new_file_name + new_extension
+                    )
+
+                    time = embedding.timestamp * 1000
+
+                    video_capture = cv2.VideoCapture(filepath)
+                    video_capture.set(cv2.CAP_PROP_POS_MSEC, time)
+                    success, image = video_capture.read()
+
+                    if success:
+                        cv2.imwrite(new_filepath, image)
+                        with open(new_filepath, "rb") as image_file:
+                            base64_image = base64.b64encode(image_file.read()).decode(
+                                "utf-8"
+                            )
+
+            else:
+                formatted_timestamp = None
+
+            if (
+                document.type == "pdf"
+                or document.type == "ppt"
+                or document.type == "doc"
+            ):
+                filepath = os.path.join(upload_dir, document.title)
+                filename_without_extension = (
+                    document.title.split(".")[0] + "-" + str(embedding.page) + ".png"
+                )
+                preview_path = os.path.join(upload_dir, filename_without_extension)
+                convert_pdf_page_to_image(filepath, embedding.page, preview_path)
+
+                with open(preview_path, "rb") as image_file:
+                    base64_image = base64.b64encode(image_file.read()).decode("utf-8")
+
+            if document.type == "youtube":
+                filename = document.title + ".jpg"
+                filepath = os.path.join(upload_dir, filename)
+
+                with open(filepath, "rb") as image_file:
+                    base64_image = base64.b64encode(image_file.read()).decode("utf-8")
+
+            results_dict[doc_id] = {
+                "title": document.title,
+                "type": document.type,
+                "content": embedding.split_content,
+                "doc_id": doc_id,
+                "keywords": document.keywords,
+                "course": course.name,
+                "topic": topic.name,
+                "page": embedding.page,
+                "page_image": base64_image,
+                "timestamp": formatted_timestamp,
+            }
+
+    # Convert the results_dict values to a list
+    response_data = list(results_dict.values())[:5]
+
+    return {"results": response_data}, 200
+
+
+@app.route("/recommend", methods=["POST"])
+@token_required
+def search_similar_resource():
+    data = request.json
+    doc_ids = data.get("document_ids")
+    user_id = (
+        db.session.query(models.User.id)
+        .filter(models.User.username == g.user)
+        .first()[0]
+    )
 
     doc_results = (
         db.session.query(models.DocSimilarity)
         .filter(
-            models.DocSimilarity.existing_document_id.in_(similar_topic_docs),
-            models.DocSimilarity.new_document_id == doc_id,
+            models.DocSimilarity.new_document_id.in_(doc_ids),
             models.DocSimilarity.existing_document_id
             != models.DocSimilarity.new_document_id,
         )
@@ -810,17 +913,30 @@ def search_similar_resource():
 
     all_users = db.session.query(models.User.id).count()
 
-    response_dict = []
-    for count, result in enumerate(doc_results):
+    results_dict = {}
+
+    for result in doc_results:
+        existing_doc_id = result.existing_document_id
+        base64_image = None
+
         document_owners = [
             owner_id[0]
             for owner_id in db.session.query(models.OwnsDocument.user_id)
             .filter(models.OwnsDocument.document_id == result.existing_document_id)
-            .all()
+            .limit(5)
         ]
 
         if user_id in document_owners:
             continue
+
+        document_owner_id = (
+            db.session.query(models.OwnsDocument.user_id)
+            .filter(
+                models.OwnsDocument.user_id != user_id,
+                models.OwnsDocument.document_id == result.existing_document_id,
+            )
+            .first()
+        )[0]
 
         document_content = (
             db.session.query(models.Document.content)
@@ -843,6 +959,11 @@ def search_similar_resource():
             .filter(models.Document.id == result.existing_document_id)
             .scalar()
         )
+        recommending_doc_type = (
+            db.session.query(models.Document.type)
+            .filter(models.Document.id == result.existing_document_id)
+            .first()
+        )[0]
         recommending_doc_title = (
             db.session.query(models.Document.title)
             .filter(models.Document.id == result.existing_document_id)
@@ -856,26 +977,98 @@ def search_similar_resource():
             )
             .first()
         )
-        response_dict.append(
-            {
-                "document_id": result.existing_document_id,
-                "document_title": recommending_doc_title,
-                "topic_id": resource_topic.id,
-                "topic_name": resource_topic.name,
-                "ratings": recommending_doc_ratings,
-                "similarity_score": result.similarity_score,
-                "user_count": user_count,
-                "similarity_weight": (user_count / all_users)
-                * result.similarity_score
-                * (recommending_doc_ratings / 5),
-            }
+        embedding = (
+            (db.session.query(models.Embeddings))
+            .filter(models.Embeddings.document_id == existing_doc_id)
+            .first()
+        )
+        course_id = (
+            db.session.query(models.Topic.course_id)
+            .filter(models.Topic.id == resource_topic.id)
+            .first()[0]
+        )
+        course_name = (
+            db.session.query(models.Course.name)
+            .filter(models.Course.id == course_id)
+            .first()[0]
         )
 
-        if len(response_dict) == 5:
-            print("Breaking the loop at count =", count)
-            break
+        upload_dir = os.path.join("uploads", str(document_owner_id))
 
-    return {"results": response_dict}
+        if embedding.timestamp:
+            timestamp = timedelta(seconds=float(embedding.timestamp))
+
+            hours, remainder = divmod(timestamp.seconds, 3600)
+            minutes, seconds = divmod(remainder, 60)
+            formatted_timestamp = "{:02}:{:02}:{:02}".format(
+                int(hours), int(minutes), int(seconds)
+            )
+
+            base_name, extension = os.path.splitext(recommending_doc_title)
+
+            if extension == ".mp4" or extension == ".mpeg" or extension == ".webm":
+                filepath = os.path.join(upload_dir, recommending_doc_title)
+                new_extension = ".jpg"
+
+                new_file_name = f"{base_name}-{formatted_timestamp}"
+                new_filepath = os.path.join(upload_dir, new_file_name + new_extension)
+
+                time = embedding.timestamp * 1000
+
+                video_capture = cv2.VideoCapture(filepath)
+                video_capture.set(cv2.CAP_PROP_POS_MSEC, time)
+                success, image = video_capture.read()
+
+                if success:
+                    cv2.imwrite(new_filepath, image)
+                    with open(new_filepath, "rb") as image_file:
+                        base64_image = base64.b64encode(image_file.read()).decode(
+                            "utf-8"
+                        )
+
+        else:
+            formatted_timestamp = None
+
+        if (
+            recommending_doc_type == "pdf"
+            or recommending_doc_type == "ppt"
+            or recommending_doc_type == "doc"
+        ):
+            filename = recommending_doc_title.split(".")[0] + ".png"
+            preview_path = os.path.join(upload_dir, filename)
+
+            with open(preview_path, "rb") as image_file:
+                base64_image = base64.b64encode(image_file.read()).decode("utf-8")
+
+        if recommending_doc_type == "youtube":
+            filename = recommending_doc_title + ".jpg"
+            filepath = os.path.join(upload_dir, filename)
+
+            with open(filepath, "rb") as image_file:
+                base64_image = base64.b64encode(image_file.read()).decode("utf-8")
+
+        results_dict[existing_doc_id] = {
+            "document_title": recommending_doc_title,
+            "type": recommending_doc_type,
+            "content": embedding.split_content,
+            "document_owner": document_owners[0],
+            "document_id": result.existing_document_id,
+            "course": course_name,
+            "topic_name": resource_topic.name,
+            "page": embedding.page,
+            "page_image": base64_image,
+            "timestamp": formatted_timestamp,
+            "ratings": recommending_doc_ratings,
+            "similarity_score": result.similarity_score,
+            "user_count": user_count,
+            "similarity_weight": (user_count / all_users)
+            * result.similarity_score
+            * (recommending_doc_ratings / 5),
+        }
+
+    response_data = list(results_dict.values())[:5]
+
+    return {"results": response_data}, 200
 
 
 @app.route("/resource-info", methods=["GET"])
