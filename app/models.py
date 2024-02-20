@@ -65,6 +65,7 @@ class Document(Base):
     date_created = mapped_column(DateTime, default=datetime.utcnow)
     deleted = mapped_column(Boolean, default=False)
     comment = mapped_column(Text, default=None)
+    comment_date_added = mapped_column(DateTime)
     label = mapped_column(String)
 
 class OwnsDocument(Base):
@@ -98,6 +99,7 @@ class Embeddings(Base):
     timestamp = mapped_column(Float)
     page = mapped_column(Integer)
     comment = mapped_column(Text, default=None)
+    comment_date_added = mapped_column(DateTime)
 
 class QueryLog(Base):
     __tablename__ = "query_logs"

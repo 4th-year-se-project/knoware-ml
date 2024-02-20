@@ -1,14 +1,14 @@
 {
-    "http://localhost:8080": [{
+    "http://localhost:8888": [{
         "default": true,
-        "client_id": "iyB0qRAHDtaVLJG",
-        "auth_login_url": "http://localhost:8080/mod/lti/auth.php",
-        "auth_token_url": "http://localhost:8080/mod/lti/token.php",
+        "client_id": "kv4bJI1IzJ6ccDh",
+        "auth_login_url": "http://localhost:8888/mod/lti/auth.php",
+        "auth_token_url": "http://localhost:8888/mod/lti/token.php",
         "auth_audience": null,
-        "key_set_url": "http://localhost:8080/mod/lti/certs.php",
+        "key_set_url": "http://localhost:8888/mod/lti/certs.php",
         "key_set": null,
         "private_key_file": "private.key",
         "public_key_file": "public.key",
-        "deployment_ids": ["2"]
+        "deployment_ids": ["1"]
     }]
 }
