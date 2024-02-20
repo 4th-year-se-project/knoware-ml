@@ -633,6 +633,11 @@ def embed_docx():
 def search():
     data = request.json
     query = data.get("query")
+    filter_file_format = data.get("file_format")
+    filter_date = data.get("date")
+    filter_course = data.get("course")
+    filter_label = data.get("label")
+
     query_embedding = embeddings_model.embed_query(query)
     user_id = (
         db.session.query(models.User.id)
@@ -667,6 +672,27 @@ def search():
         models.Embeddings.embedding.cosine_distance(query_embedding)
     )
 
+    if(filter_file_format):
+        results = results.filter(models.Document.type == filter_file_format)
+
+    if(filter_label):
+        results = results.filter(models.Document.label == filter_label)
+
+    if(filter_date):
+        current_date = datetime.now()
+
+        if filter_date == '1 day ago':
+            results = results.filter(models.Document.date_created >= current_date - timedelta(days=1))
+
+        if filter_date == '2 days ago':
+            results = results.filter(models.Document.date_created >= current_date - timedelta(days=2))
+
+        if filter_date == '1 week ago':
+            results = results.filter(models.Document.date_created >= current_date - timedelta(weeks=1))
+
+        if filter_date == '1 month ago':
+            results = results.filter(models.Document.date_created >= current_date - timedelta(weeks=2))
+    
     doc_ids = []
     for result in results:
         embedding, document, course, topic = result
@@ -675,6 +701,9 @@ def search():
 
         # Check if this document ID is already in the results_dict
         if doc_id not in results_dict:
+            if(filter_course):
+                if(topic.name != filter_course): continue
+            
             doc_ids.append(doc_id)
             if embedding.timestamp:
                 timestamp = timedelta(seconds=float(embedding.timestamp))
@@ -1182,6 +1211,7 @@ def get_resource_info():
                 "page": best_embedding.page,
                 "page_image": base64_image,
                 "timestamp": formatted_timestamp,
+                "label": document.label,
                 # "topics": [course.name, topic.name, sub_topic.name],
             }
         ),
@@ -1279,6 +1309,7 @@ def get_all_resources():
                 "page": embedding.page,
                 "page_image": base64_image,
                 "timestamp": formatted_timestamp,
+                "label": document.label,
             }
 
     # Convert the results_dict values to a list
@@ -1769,6 +1800,46 @@ def add_comment():
 
         return jsonify(
             {"message": f"Comment added for document with ID {document_id}."}
+        )
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500  # 500 Internal Server Error
+
+
+@app.route("/get-all-courses", methods=["GET"])
+def filter_type():
+    courses = db.session.query(models.Course.name).all()
+
+    if not courses:
+        return jsonify({"error": "Topic not found"}), 404
+
+    course_list = [course.name for course in courses]
+
+    return jsonify({"topics": course_list}), 200
+
+
+@app.route("/update-label", methods=["PUT"])
+def update_label():
+    try:
+        document_id = request.args.get("document_id")
+        label = request.args.get("label")
+
+        document = (
+            db.session.query(models.Document)
+            .filter(models.Document.id == document_id)
+            .first()
+        )
+
+        if not document:
+            return jsonify({"error": "Document not found"}), 404
+
+        document.label = label
+        db.session.commit()
+
+        return jsonify(
+            {
+                "message": f'Label for document with ID {document_id} updated to "{label}"'
+            }
         )
 
     except Exception as e:

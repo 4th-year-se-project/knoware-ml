@@ -65,7 +65,7 @@ class Document(Base):
     date_created = mapped_column(DateTime, default=datetime.utcnow)
     deleted = mapped_column(Boolean, default=False)
     comment = mapped_column(Text, default=None)
-
+    label = mapped_column(String)
 
 class OwnsDocument(Base):
     __tablename__ = "owns_document"
