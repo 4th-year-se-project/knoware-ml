@@ -39,6 +39,26 @@ import requests
 from io import BytesIO
 from PIL import Image
 
+# import datetime
+import os
+import pprint
+
+
+from flask import Flask, jsonify, redirect, request, render_template, url_for
+from flask_caching import Cache
+from werkzeug.exceptions import Forbidden
+from pylti1p3.contrib.flask import (
+    FlaskOIDCLogin,
+    FlaskMessageLaunch,
+    FlaskRequest,
+    FlaskCacheDataStorage,
+)
+from pylti1p3.deep_link_resource import DeepLinkResource
+from pylti1p3.grade import Grade
+from pylti1p3.lineitem import LineItem
+from pylti1p3.tool_config import ToolConfJsonFile
+from pylti1p3.registration import Registration
+
 modelPath = "../models/all-MiniLM-L6-v2"
 model_kwargs = {"device": "cpu"}
 encode_kwargs = {"normalize_embeddings": False}
@@ -59,6 +79,134 @@ uno_path = "/Applications/LibreOffice.app/Contents/MacOS"
 os.environ["UNO_PATH"] = uno_path
 
 ALLOWED_EXTENSIONS = {"mp3", "mp4", "mpeg", "mpga", "m4a", "wav", "webm"}
+
+
+cache = Cache(app)
+
+
+class ExtendedFlaskMessageLaunch(FlaskMessageLaunch):
+    def validate_nonce(self):
+        """
+        Probably it is bug on "https://lti-ri.imsglobal.org":
+        site passes invalid "nonce" value during deep links launch.
+        Because of this in case of iss == http://imsglobal.org just skip nonce validation.
+
+        """
+        iss = self.get_iss()
+        deep_link_launch = self.is_deep_link_launch()
+        if iss == "http://imsglobal.org" and deep_link_launch:
+            return self
+        return super().validate_nonce()
+
+
+def get_lti_config_path():
+    return os.path.join(app.root_path, "configs", "moodle.json")
+
+
+def get_launch_data_storage():
+    return FlaskCacheDataStorage(cache)
+
+
+def get_jwk_from_public_key(key_name):
+    key_path = os.path.join(app.root_path, "configs", key_name)
+    f = open(key_path, "r")
+    key_content = f.read()
+    jwk = Registration.get_jwk(key_content)
+    f.close()
+    return jwk
+
+
+@app.route("/mlogin/", methods=["GET", "POST"])
+def mlogin():
+    tool_conf = ToolConfJsonFile(get_lti_config_path())
+    launch_data_storage = get_launch_data_storage()
+
+    flask_request = FlaskRequest()
+    target_link_uri = flask_request.get_param("target_link_uri")
+    if not target_link_uri:
+        raise Exception('Missing "target_link_uri" param')
+
+    oidc_login = FlaskOIDCLogin(
+        flask_request, tool_conf, launch_data_storage=launch_data_storage
+    )
+    return oidc_login.enable_check_cookies().redirect(target_link_uri)
+
+
+@app.route("/launch/", methods=["POST"])
+def launch():
+    tool_conf = ToolConfJsonFile(get_lti_config_path())
+    flask_request = FlaskRequest()
+    launch_data_storage = get_launch_data_storage()
+    message_launch = ExtendedFlaskMessageLaunch(
+        flask_request, tool_conf, launch_data_storage=launch_data_storage
+    )
+    message_launch_data = message_launch.get_launch_data()
+    # pprint.pprint(message_launch_data.get("email"))
+    email = message_launch_data.get("email")
+    name = message_launch_data.get("name")
+    pprint.pprint(email)
+    course = message_launch_data.get(
+        "https://purl.imsglobal.org/spec/lti/claim/context"
+    ).get("label")
+    pprint.pprint(course)
+
+    user = db.session.query(models.User).filter(models.User.username == email).first()
+
+    if not user:
+        # add new user
+        user = models.User(
+            name=name, username=email, password=sha256_crypt.hash("password")
+        )
+        db.session.add(user)
+        db.session.commit()
+
+    user_id = user.id
+
+    course = (
+        db.session.query(models.Course).filter(models.Course.code == course).first()
+    )
+
+    # check if user registered to course else add
+    registered_to = (
+        db.session.query(models.RegisteredTo)
+        .filter(models.RegisteredTo.user_id == user_id)
+        .filter(models.RegisteredTo.course_id == course.id)
+        .first()
+    )
+
+    if not registered_to:
+        registered_to = models.RegisteredTo(user_id=user_id, course_id=course.id)
+        db.session.add(registered_to)
+        db.session.commit()
+
+    token = jwt.encode(
+        {
+            "identity": user.username,
+            "exp": datetime.utcnow() + timedelta(weeks=1),
+        },
+        app.config["SECRET_KEY"],
+        algorithm="HS256",
+    )
+
+    pprint.pprint(token)
+
+    # Replace the following line with the endpoint name of your React frontend route
+    react_frontend_endpoint = "http://127.0.0.1:3000/"
+
+    # Generate the URL for the React frontend using url_for
+
+    # Redirect to the React frontend
+    return redirect(
+        react_frontend_endpoint + "?" + "token=" + token + "&" + "name=" + name
+    )
+    # set to token
+    # return render_template("game.html", **tpl_kwargs)
+
+
+@app.route("/jwks/", methods=["GET"])
+def get_jwks():
+    tool_conf = ToolConfJsonFile(get_lti_config_path())
+    return jsonify({"keys": tool_conf.get_jwks()})
 
 
 def allowed_file(filename):
@@ -1545,14 +1693,42 @@ def assign_topic(stored_document):
         .filter(models.Embeddings.document_id == stored_document.id)
         .all()
     )
-    topics = db.session.query(models.Topic).all()
+
+    user_id = (
+        db.session.query(models.User.id)
+        .filter(models.User.username == g.user)
+        .first()[0]
+    )
+    print(user_id)
+    # get topics from registered courses
+    registered_courses = (
+        db.session.query(models.Course)
+        .join(
+            models.RegisteredTo,
+            models.Course.id == models.RegisteredTo.course_id,
+        )
+        .filter(
+            models.RegisteredTo.user_id == user_id,
+        )
+        .all()
+    )
+    candidate_topics = []
+    for course in registered_courses:
+        topics = (
+            db.session.query(models.Topic)
+            .filter(models.Topic.course_id == course.id)
+            .all()
+        )
+        candidate_topics.extend(topics)
+
+    # topics = db.session.query(models.Topic).all()
 
     best_topic = None
     best_similarity = -1
 
     # Iterate through document chunks and calculate similarities with the topics
     for embedding in embeddings:
-        for topic in topics:
+        for topic in candidate_topics:
             similarity = cosine_similarity([embedding.embedding], [topic.embedding])[0][
                 0
             ]
