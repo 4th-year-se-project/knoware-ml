@@ -56,6 +56,7 @@ class Document(Base):
     id = mapped_column(Integer, primary_key=True)
     title = mapped_column(String)
     content = mapped_column(Text)
+    type = mapped_column(String)
     topic_id = mapped_column(ForeignKey("topic.id"))
     link = mapped_column(String)
     topic = relationship("Topic", back_populates="children")
@@ -63,7 +64,8 @@ class Document(Base):
     ratings = mapped_column(Float, default=5)
     date_created = mapped_column(DateTime, default=datetime.utcnow)
     deleted = mapped_column(Boolean, default=False)
-
+    comment = mapped_column(Text, default=None)
+    label = mapped_column(String)
 
 class OwnsDocument(Base):
     __tablename__ = "owns_document"
@@ -93,6 +95,8 @@ class Embeddings(Base):
     split_content = mapped_column(Text)
     embedding = mapped_column(Vector(384))
     document_id = mapped_column(ForeignKey("document.id", ondelete="CASCADE"))
+    timestamp = mapped_column(Float)
+    page = mapped_column(Integer)
 
 class QueryLog(Base):
     __tablename__ = "query_logs"

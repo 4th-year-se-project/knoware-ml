@@ -29,6 +29,15 @@ import logging
 from passlib.hash import sha256_crypt
 import jwt
 from datetime import datetime, timedelta
+import subprocess
+from sqlalchemy import func
+from collections import defaultdict
+import fitz
+import base64
+import cv2
+import requests
+from io import BytesIO
+from PIL import Image
 
 modelPath = "../models/all-MiniLM-L6-v2"
 model_kwargs = {"device": "cpu"}
@@ -44,6 +53,10 @@ whisper_model = whisper.load_model("small", download_root="../models/whisper")
 
 sentence_model = SentenceTransformer(modelPath)
 kw_model = KeyBERT(model=sentence_model)
+
+# change this to the correct path where your libreoffice is installed
+uno_path = "/Applications/LibreOffice.app/Contents/MacOS"
+os.environ["UNO_PATH"] = uno_path
 
 ALLOWED_EXTENSIONS = {"mp3", "mp4", "mpeg", "mpga", "m4a", "wav", "webm"}
 
@@ -80,10 +93,8 @@ def token_required(f):
 
 
 @app.route("/getPdf", methods=["GET"])
-@token_required
 def serve_pdf():
     doc_id = request.args.get("document_id")
-    print(doc_id)
     filename = (
         db.session.query(models.Document.title)
         .filter(models.Document.id == doc_id)
@@ -97,8 +108,11 @@ def serve_pdf():
     )
     uploaded_dir = os.path.join("uploads", str(owner_id))
     pdf_directory = os.path.join(os.getcwd(), uploaded_dir)
+
+    if not filename.lower().endswith(".pdf"):
+        filename = os.path.splitext(filename)[0] + ".pdf"
+
     pdf_file_path = os.path.join(pdf_directory, filename)
-    print(pdf_file_path)
 
     return send_file(pdf_file_path, as_attachment=True, mimetype="application/pdf")
 
@@ -119,6 +133,14 @@ def embed_youtube():
     video_url = data.get("video_url")
     yt = YouTube(video_url)
     title = yt.title
+
+    thumbnail_url = yt.thumbnail_url
+    response = requests.get(thumbnail_url)
+    image = Image.open(BytesIO(response.content))
+
+    filename = title + ".jpg"
+    filepath = os.path.join(upload_dir, filename)
+    image.save(filepath)
 
     transcript_text = ""
     try:
@@ -160,6 +182,7 @@ def embed_youtube():
         content=preprocessed_transcript_text,
         keywords=keywords,
         link=video_url,
+        type="youtube",
     )
     db.session.add(stored_document)
     db.session.commit()
@@ -224,23 +247,18 @@ def embed_pdf():
         file.save(filepath)
 
         # Load and process the PDF content
-        documents = loader.load_data(
-            file=Path(filepath)
-        )  # Implement the PDF loading function
+        documents = loader.load_data(file=Path(filepath))
         document_texts = [document.text for document in documents]
+        pages = [document.metadata["page_label"] for document in documents]
         document_text = "".join(document_texts)
         preprocessed_text = preprocess_text(document_text)
         if existsDuplicate(preprocessed_text, user_id):
             return "Duplicate document", 400
-        text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=1000, chunk_overlap=150
-        )
-        docs = text_splitter.split_text(document_text)
-        embeddings = embeddings_model.embed_documents(docs)
-        keywords = get_keywords(docs)
+        embeddings = embeddings_model.embed_documents(document_texts)
+        keywords = get_keywords(document_texts)
 
         stored_document = models.Document(
-            title=filename, content=preprocessed_text, keywords=keywords
+            title=filename, content=preprocessed_text, keywords=keywords, type="pdf"
         )
         db.session.add(stored_document)
         db.session.commit()
@@ -253,11 +271,12 @@ def embed_pdf():
         similarity_thread.start()
 
         # Store the embeddings in the database
-        for embedding, doc in zip(embeddings, docs):
+        for embedding, doc, page in zip(embeddings, document_texts, pages):
             stored_embedding = models.Embeddings(
                 split_content=doc,
                 embedding=embedding,
                 document_id=stored_document.id,
+                page=page,
             )
             db.session.add(stored_embedding)
         db.session.commit()
@@ -277,9 +296,22 @@ def embed_pdf():
         db.session.add(owns_document)
         db.session.commit()
 
-        print(user_id)
+        filename_without_extension = filename.split(".")[0] + ".png"
+
+        preview_path = os.path.join(upload_dir, filename_without_extension)
+        convert_pdf_page_to_image(filepath, 1, preview_path)
 
         return "Embeddings saved in the database."
+
+
+def convert_to_pdf(input_file, output_file):
+    try:
+        subprocess.run(
+            ["unoconv", "-f", "pdf", "-o", output_file, input_file], check=True
+        )
+        print(f"Conversion successful: {input_file} -> {output_file}")
+    except subprocess.CalledProcessError as e:
+        print(f"Error during conversion: {e}")
 
 
 @app.route("/embed_pptx", methods=["POST"])
@@ -306,12 +338,17 @@ def embed_pptx():
     if file:
         # Securely save the uploaded file
         filename = secure_filename(file.filename)
-        filepath = os.path.join(upload_dir, filename)
-        file.save(filepath)
+        original_filepath = os.path.join(upload_dir, filename)
+        file.save(original_filepath)
+
+        # Convert to PDF
+        pdf_filename = os.path.splitext(filename)[0] + ".pdf"
+        pdf_filepath = os.path.join(upload_dir, pdf_filename)
+        convert_to_pdf(original_filepath, pdf_filepath)
 
         # Load and process the PDF content
         documents = loader.load_data(
-            file=Path(filepath)
+            file=Path(original_filepath)
         )  # Implement the PDF loading function
         text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=1000, chunk_overlap=150
@@ -326,7 +363,7 @@ def embed_pptx():
         keywords = get_keywords(docs)
 
         stored_document = models.Document(
-            title=filename, content=preprocessed_text, keywords=keywords
+            title=filename, content=preprocessed_text, keywords=keywords, type="ppt"
         )
         db.session.add(stored_document)
         db.session.commit()
@@ -359,6 +396,8 @@ def embed_pptx():
         db.session.add(owns_document)
         db.session.commit()
 
+        os.remove(original_filepath)
+
         return "Embeddings saved in the database."
 
 
@@ -390,19 +429,50 @@ def embed_audio():
 
         # Load and process the audio content
         transcript = whisper_model.transcribe(filepath)
+
         preprocessed_text = preprocess_text(transcript["text"])
         if existsDuplicate(preprocessed_text, user_id):
             return "Duplicate document", 400
-        text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=1000, chunk_overlap=150
-        )
-        docs = text_splitter.split_text(transcript["text"])
 
-        embeddings = embeddings_model.embed_documents(docs)
+        # Desired time length for each combined segment in seconds
+        desired_combined_segment_length = 30.0
 
-        keywords = get_keywords(docs)
+        # Combine consecutive segments until the desired length is reached
+        docs = []
+        current_doc = {"text": "", "start": 0.0, "end": 0.0}
+
+        for segment in transcript["segments"]:
+            if (
+                segment["start"] - current_doc["start"]
+                <= desired_combined_segment_length
+            ):
+                # Concatenate segments
+                current_doc["text"] += " " + segment["text"]
+                current_doc["end"] = segment["end"]
+            else:
+                # Check if the combined segment meets the desired length
+                if (
+                    current_doc["end"] - current_doc["start"]
+                    >= desired_combined_segment_length
+                ):
+                    docs.append(current_doc)
+
+                # Start a new combined segment
+                current_doc = {
+                    "text": segment["text"],
+                    "start": segment["start"],
+                    "end": segment["end"],
+                }
+
+        # Check and add the last combined segment
+        if current_doc["text"]:
+            docs.append(current_doc)
+
+        embeddings = embeddings_model.embed_documents([doc["text"] for doc in docs])
+
+        keywords = get_keywords([doc["text"] for doc in docs])
         stored_document = models.Document(
-            title=filename, content=preprocessed_text, keywords=keywords
+            title=filename, content=preprocessed_text, keywords=keywords, type="audio"
         )
         db.session.add(stored_document)
         db.session.commit()
@@ -417,9 +487,10 @@ def embed_audio():
         # Store the embeddings in the database
         for embedding, chunk in zip(embeddings, docs):
             stored_embedding = models.Embeddings(
-                split_content=chunk,
+                split_content=chunk["text"],
                 embedding=embedding,
                 document_id=stored_document.id,
+                timestamp=chunk["start"],
             )
             db.session.add(stored_embedding)
         db.session.commit()
@@ -438,6 +509,20 @@ def embed_audio():
         )
         db.session.add(owns_document)
         db.session.commit()
+
+        base_name, extension = os.path.splitext(filename)
+        if extension == ".mp4" or extension == ".mpeg" or extension == ".webm":
+            filepath = os.path.join(upload_dir, filename)
+            new_extension = ".jpg"
+
+            new_filepath = os.path.join(upload_dir, base_name + new_extension)
+
+            video_capture = cv2.VideoCapture(filepath)
+            video_capture.set(cv2.CAP_PROP_POS_MSEC, 0)
+            success, image = video_capture.read()
+
+            if success:
+                cv2.imwrite(new_filepath, image)
 
         return "Audio embeddings saved in the database."
     else:
@@ -468,12 +553,20 @@ def embed_docx():
     if file:
         # Securely save the uploaded file
         filename = secure_filename(file.filename)
-        filepath = os.path.join(upload_dir, filename)
-        file.save(filepath)
+        original_filepath = os.path.join(upload_dir, filename)
+        file.save(original_filepath)
+
+        if user_id == 1:
+            print(f"File extension: {os.path.splitext(filename)[-1]}")
+
+            # Convert to PDF
+            pdf_filename = os.path.splitext(filename)[0] + ".pdf"
+            pdf_filepath = os.path.join(upload_dir, pdf_filename)
+            convert_to_pdf(original_filepath, pdf_filepath)
 
         # Load and process the docx content
         documents = loader.load_data(
-            file=Path(filepath)
+            file=Path(original_filepath)
         )  # Implement the docx loading function
 
         document_texts = [document.text for document in documents]
@@ -493,7 +586,7 @@ def embed_docx():
         keywords = get_keywords(docs)
 
         stored_document = models.Document(
-            title=filename, content=preprocessed_text, keywords=keywords
+            title=filename, content=preprocessed_text, keywords=keywords, type="doc"
         )
         db.session.add(stored_document)
         db.session.commit()
@@ -530,6 +623,8 @@ def embed_docx():
         db.session.add(owns_document)
         db.session.commit()
 
+        os.remove(original_filepath)
+
         return "Embeddings saved in the database."
 
 
@@ -538,12 +633,18 @@ def embed_docx():
 def search():
     data = request.json
     query = data.get("query")
+    filter_file_format = data.get("file_format")
+    filter_date = data.get("date")
+    filter_course = data.get("course")
+    filter_label = data.get("label")
+
     query_embedding = embeddings_model.embed_query(query)
     user_id = (
         db.session.query(models.User.id)
         .filter(models.User.username == g.user)
         .first()[0]
     )
+    upload_dir = os.path.join("uploads", str(user_id))
 
     # Create a dictionary to store the results, indexed by document ID
     results_dict = {}
@@ -571,20 +672,108 @@ def search():
         models.Embeddings.embedding.cosine_distance(query_embedding)
     )
 
+    if(filter_file_format):
+        results = results.filter(models.Document.type == filter_file_format)
+
+    if(filter_label):
+        results = results.filter(models.Document.label == filter_label)
+
+    if(filter_date):
+        current_date = datetime.now()
+
+        if filter_date == '1 day ago':
+            results = results.filter(models.Document.date_created >= current_date - timedelta(days=1))
+
+        if filter_date == '2 days ago':
+            results = results.filter(models.Document.date_created >= current_date - timedelta(days=2))
+
+        if filter_date == '1 week ago':
+            results = results.filter(models.Document.date_created >= current_date - timedelta(weeks=1))
+
+        if filter_date == '1 month ago':
+            results = results.filter(models.Document.date_created >= current_date - timedelta(weeks=2))
+    
     doc_ids = []
     for result in results:
         embedding, document, course, topic = result
         doc_id = document.id
+        base64_image = None
+
         # Check if this document ID is already in the results_dict
         if doc_id not in results_dict:
+            if(filter_course):
+                if(topic.name != filter_course): continue
+            
             doc_ids.append(doc_id)
+            if embedding.timestamp:
+                timestamp = timedelta(seconds=float(embedding.timestamp))
+
+                hours, remainder = divmod(timestamp.seconds, 3600)
+                minutes, seconds = divmod(remainder, 60)
+                formatted_timestamp = "{:02}:{:02}:{:02}".format(
+                    int(hours), int(minutes), int(seconds)
+                )
+
+                base_name, extension = os.path.splitext(document.title)
+
+                if extension == ".mp4" or extension == ".mpeg" or extension == ".webm":
+                    filepath = os.path.join(upload_dir, document.title)
+                    new_extension = ".jpg"
+
+                    new_file_name = f"{base_name}-{formatted_timestamp}"
+                    new_filepath = os.path.join(
+                        upload_dir, new_file_name + new_extension
+                    )
+
+                    time = embedding.timestamp * 1000
+
+                    video_capture = cv2.VideoCapture(filepath)
+                    video_capture.set(cv2.CAP_PROP_POS_MSEC, time)
+                    success, image = video_capture.read()
+
+                    if success:
+                        cv2.imwrite(new_filepath, image)
+                        with open(new_filepath, "rb") as image_file:
+                            base64_image = base64.b64encode(image_file.read()).decode(
+                                "utf-8"
+                            )
+
+            else:
+                formatted_timestamp = None
+
+            if (
+                document.type == "pdf"
+                or document.type == "ppt"
+                or document.type == "doc"
+            ):
+                filepath = os.path.join(upload_dir, document.title)
+                filename_without_extension = (
+                    document.title.split(".")[0] + "-" + str(embedding.page) + ".png"
+                )
+                preview_path = os.path.join(upload_dir, filename_without_extension)
+                convert_pdf_page_to_image(filepath, embedding.page, preview_path)
+
+                with open(preview_path, "rb") as image_file:
+                    base64_image = base64.b64encode(image_file.read()).decode("utf-8")
+
+            if document.type == "youtube":
+                filename = document.title + ".jpg"
+                filepath = os.path.join(upload_dir, filename)
+
+                with open(filepath, "rb") as image_file:
+                    base64_image = base64.b64encode(image_file.read()).decode("utf-8")
+
             results_dict[doc_id] = {
                 "title": document.title,
+                "type": document.type,
                 "content": embedding.split_content,
                 "doc_id": doc_id,
                 "keywords": document.keywords,
                 "course": course.name,
                 "topic": topic.name,
+                "page": embedding.page,
+                "page_image": base64_image,
+                "timestamp": formatted_timestamp,
             }
 
     # Convert the results_dict values to a list
@@ -597,50 +786,153 @@ def search():
     return {"results": response_data}, 200
 
 
-@app.route("/recommend", methods=["POST"])
+@app.route("/search-recommend", methods=["POST"])
 @token_required
-def search_similar_resource():
+def search_recommendation():
     data = request.json
-    doc_id = data.get("document_id")
+    query = data.get("query")
+
+    query_embedding = embeddings_model.embed_query(query)
     user_id = (
         db.session.query(models.User.id)
         .filter(models.User.username == g.user)
         .first()[0]
     )
-    topic_id = (
-        db.session.query(models.Document.topic_id)
-        .filter(models.Document.id == doc_id)
-        .first()
-    )[0]
-    course_id = (
-        db.session.query(models.Topic.course_id)
-        .filter(models.Topic.id == topic_id)
-        .first()
-    )[0]
 
-    similar_topic_ids = (
-        db.session.query(models.Topic.id)
-        .filter(models.Topic.course_id == course_id)
-        .all()
-    )
-    similar_topic_ids = [topic_id for (topic_id,) in similar_topic_ids]
+    results_dict = {}
 
-    similar_topic_docs = (
-        db.session.query(models.Document.id)
-        .filter(
-            models.Document.topic_id.in_(similar_topic_ids),
-            models.Document.id != doc_id,
-            models.Document.deleted == False,
-        )
-        .all()
+    results = db.session.query(
+        models.Embeddings,
+        models.Document,
+        models.Topic,
+        models.Course,
+        models.OwnsDocument,
     )
-    similar_topic_docs = [document_id for (document_id,) in similar_topic_docs]
+    results = results.join(
+        models.Document, models.Embeddings.document_id == models.Document.id
+    )
+    results = results.join(models.Topic, models.Document.topic_id == models.Topic.id)
+    results = results.join(models.Course, models.Topic.course_id == models.Course.id)
+    results = results.join(
+        models.OwnsDocument, models.OwnsDocument.document_id == models.Document.id
+    )
+
+    # Filter others resources
+    results = results.filter(
+        models.OwnsDocument.user_id != user_id, models.Document.deleted == False
+    )
+
+    # Calculate and order by cosine distance
+    results = results.order_by(
+        models.Embeddings.embedding.cosine_distance(query_embedding)
+    )
+
+    print(results)
+
+    doc_ids = []
+    for result in results:
+        embedding, document, course, topic, owns_document = result
+        doc_id = document.id
+        base64_image = None
+        id = owns_document.user_id
+
+        upload_dir = os.path.join("uploads", str(id))
+
+        # Check if this document ID is already in the results_dict
+        if doc_id not in results_dict:
+            doc_ids.append(doc_id)
+            if embedding.timestamp:
+                timestamp = timedelta(seconds=float(embedding.timestamp))
+
+                hours, remainder = divmod(timestamp.seconds, 3600)
+                minutes, seconds = divmod(remainder, 60)
+                formatted_timestamp = "{:02}:{:02}:{:02}".format(
+                    int(hours), int(minutes), int(seconds)
+                )
+
+                base_name, extension = os.path.splitext(document.title)
+
+                if extension == ".mp4" or extension == ".mpeg" or extension == ".webm":
+                    filepath = os.path.join(upload_dir, document.title)
+                    new_extension = ".jpg"
+
+                    new_file_name = f"{base_name}-{formatted_timestamp}"
+                    new_filepath = os.path.join(
+                        upload_dir, new_file_name + new_extension
+                    )
+
+                    time = embedding.timestamp * 1000
+
+                    video_capture = cv2.VideoCapture(filepath)
+                    video_capture.set(cv2.CAP_PROP_POS_MSEC, time)
+                    success, image = video_capture.read()
+
+                    if success:
+                        cv2.imwrite(new_filepath, image)
+                        with open(new_filepath, "rb") as image_file:
+                            base64_image = base64.b64encode(image_file.read()).decode(
+                                "utf-8"
+                            )
+
+            else:
+                formatted_timestamp = None
+
+            if (
+                document.type == "pdf"
+                or document.type == "ppt"
+                or document.type == "doc"
+            ):
+                filepath = os.path.join(upload_dir, document.title)
+                filename_without_extension = (
+                    document.title.split(".")[0] + "-" + str(embedding.page) + ".png"
+                )
+                preview_path = os.path.join(upload_dir, filename_without_extension)
+                convert_pdf_page_to_image(filepath, embedding.page, preview_path)
+
+                with open(preview_path, "rb") as image_file:
+                    base64_image = base64.b64encode(image_file.read()).decode("utf-8")
+
+            if document.type == "youtube":
+                filename = document.title + ".jpg"
+                filepath = os.path.join(upload_dir, filename)
+
+                with open(filepath, "rb") as image_file:
+                    base64_image = base64.b64encode(image_file.read()).decode("utf-8")
+
+            results_dict[doc_id] = {
+                "title": document.title,
+                "type": document.type,
+                "content": embedding.split_content,
+                "doc_id": doc_id,
+                "keywords": document.keywords,
+                "course": course.name,
+                "topic": topic.name,
+                "page": embedding.page,
+                "page_image": base64_image,
+                "timestamp": formatted_timestamp,
+            }
+
+    # Convert the results_dict values to a list
+    response_data = list(results_dict.values())[:5]
+
+    return {"results": response_data}, 200
+
+
+@app.route("/recommend", methods=["POST"])
+@token_required
+def search_similar_resource():
+    data = request.json
+    doc_ids = data.get("document_ids")
+    user_id = (
+        db.session.query(models.User.id)
+        .filter(models.User.username == g.user)
+        .first()[0]
+    )
 
     doc_results = (
         db.session.query(models.DocSimilarity)
         .filter(
-            models.DocSimilarity.existing_document_id.in_(similar_topic_docs),
-            models.DocSimilarity.new_document_id == doc_id,
+            models.DocSimilarity.new_document_id.in_(doc_ids),
             models.DocSimilarity.existing_document_id
             != models.DocSimilarity.new_document_id,
         )
@@ -650,17 +942,30 @@ def search_similar_resource():
 
     all_users = db.session.query(models.User.id).count()
 
-    response_dict = []
-    for count, result in enumerate(doc_results):
+    results_dict = {}
+
+    for result in doc_results:
+        existing_doc_id = result.existing_document_id
+        base64_image = None
+
         document_owners = [
             owner_id[0]
             for owner_id in db.session.query(models.OwnsDocument.user_id)
             .filter(models.OwnsDocument.document_id == result.existing_document_id)
-            .all()
+            .limit(5)
         ]
 
         if user_id in document_owners:
             continue
+
+        document_owner_id = (
+            db.session.query(models.OwnsDocument.user_id)
+            .filter(
+                models.OwnsDocument.user_id != user_id,
+                models.OwnsDocument.document_id == result.existing_document_id,
+            )
+            .first()
+        )[0]
 
         document_content = (
             db.session.query(models.Document.content)
@@ -683,6 +988,11 @@ def search_similar_resource():
             .filter(models.Document.id == result.existing_document_id)
             .scalar()
         )
+        recommending_doc_type = (
+            db.session.query(models.Document.type)
+            .filter(models.Document.id == result.existing_document_id)
+            .first()
+        )[0]
         recommending_doc_title = (
             db.session.query(models.Document.title)
             .filter(models.Document.id == result.existing_document_id)
@@ -696,26 +1006,98 @@ def search_similar_resource():
             )
             .first()
         )
-        response_dict.append(
-            {
-                "document_id": result.existing_document_id,
-                "document_title": recommending_doc_title,
-                "topic_id": resource_topic.id,
-                "topic_name": resource_topic.name,
-                "ratings": recommending_doc_ratings,
-                "similarity_score": result.similarity_score,
-                "user_count": user_count,
-                "similarity_weight": (user_count / all_users)
-                * result.similarity_score
-                * (recommending_doc_ratings / 5),
-            }
+        embedding = (
+            (db.session.query(models.Embeddings))
+            .filter(models.Embeddings.document_id == existing_doc_id)
+            .first()
+        )
+        course_id = (
+            db.session.query(models.Topic.course_id)
+            .filter(models.Topic.id == resource_topic.id)
+            .first()[0]
+        )
+        course_name = (
+            db.session.query(models.Course.name)
+            .filter(models.Course.id == course_id)
+            .first()[0]
         )
 
-        if len(response_dict) == 5:
-            print("Breaking the loop at count =", count)
-            break
+        upload_dir = os.path.join("uploads", str(document_owner_id))
 
-    return {"results": response_dict}
+        if embedding.timestamp:
+            timestamp = timedelta(seconds=float(embedding.timestamp))
+
+            hours, remainder = divmod(timestamp.seconds, 3600)
+            minutes, seconds = divmod(remainder, 60)
+            formatted_timestamp = "{:02}:{:02}:{:02}".format(
+                int(hours), int(minutes), int(seconds)
+            )
+
+            base_name, extension = os.path.splitext(recommending_doc_title)
+
+            if extension == ".mp4" or extension == ".mpeg" or extension == ".webm":
+                filepath = os.path.join(upload_dir, recommending_doc_title)
+                new_extension = ".jpg"
+
+                new_file_name = f"{base_name}-{formatted_timestamp}"
+                new_filepath = os.path.join(upload_dir, new_file_name + new_extension)
+
+                time = embedding.timestamp * 1000
+
+                video_capture = cv2.VideoCapture(filepath)
+                video_capture.set(cv2.CAP_PROP_POS_MSEC, time)
+                success, image = video_capture.read()
+
+                if success:
+                    cv2.imwrite(new_filepath, image)
+                    with open(new_filepath, "rb") as image_file:
+                        base64_image = base64.b64encode(image_file.read()).decode(
+                            "utf-8"
+                        )
+
+        else:
+            formatted_timestamp = None
+
+        if (
+            recommending_doc_type == "pdf"
+            or recommending_doc_type == "ppt"
+            or recommending_doc_type == "doc"
+        ):
+            filename = recommending_doc_title.split(".")[0] + ".png"
+            preview_path = os.path.join(upload_dir, filename)
+
+            with open(preview_path, "rb") as image_file:
+                base64_image = base64.b64encode(image_file.read()).decode("utf-8")
+
+        if recommending_doc_type == "youtube":
+            filename = recommending_doc_title + ".jpg"
+            filepath = os.path.join(upload_dir, filename)
+
+            with open(filepath, "rb") as image_file:
+                base64_image = base64.b64encode(image_file.read()).decode("utf-8")
+
+        results_dict[existing_doc_id] = {
+            "document_title": recommending_doc_title,
+            "type": recommending_doc_type,
+            "content": embedding.split_content,
+            "document_owner": document_owners[0],
+            "document_id": result.existing_document_id,
+            "course": course_name,
+            "topic_name": resource_topic.name,
+            "page": embedding.page,
+            "page_image": base64_image,
+            "timestamp": formatted_timestamp,
+            "ratings": recommending_doc_ratings,
+            "similarity_score": result.similarity_score,
+            "user_count": user_count,
+            "similarity_weight": (user_count / all_users)
+            * result.similarity_score
+            * (recommending_doc_ratings / 5),
+        }
+
+    response_data = list(results_dict.values())[:5]
+
+    return {"results": response_data}, 200
 
 
 @app.route("/resource-info", methods=["GET"])
@@ -724,6 +1106,12 @@ def get_resource_info():
     document_id = request.args.get("document_id")
     query = request.args.get("query")
     query_embedding = embeddings_model.embed_query(query)
+    user_id = (
+        db.session.query(models.User.id)
+        .filter(models.User.username == g.user)
+        .first()[0]
+    )
+    upload_dir = os.path.join("uploads", str(user_id))
 
     document = (
         db.session.query(models.Document)
@@ -754,12 +1142,62 @@ def get_resource_info():
 
     best_embedding = ""
     best_similarity = -1
+    base64_image = None
 
     for embedding in embeddings:
         similarity = cosine_similarity([embedding.embedding], [query_embedding])[0][0]
         if similarity > best_similarity:
             best_similarity = similarity
-            best_embedding = embedding.split_content
+            best_embedding = embedding
+
+    if document.type == "pdf" or document.type == "ppt" or document.type == "doc":
+        filepath = os.path.join(upload_dir, document.title)
+        filename_without_extension = (
+            document.title.split(".")[0] + "-" + str(embedding.page) + ".png"
+        )
+        preview_path = os.path.join(upload_dir, filename_without_extension)
+        convert_pdf_page_to_image(filepath, embedding.page, preview_path)
+
+        with open(preview_path, "rb") as image_file:
+            base64_image = base64.b64encode(image_file.read()).decode("utf-8")
+
+    if document.type == "youtube":
+        filename = document.title + ".jpg"
+        filepath = os.path.join(upload_dir, filename)
+
+        with open(filepath, "rb") as image_file:
+            base64_image = base64.b64encode(image_file.read()).decode("utf-8")
+
+    if best_embedding.timestamp:
+        timestamp = timedelta(seconds=best_embedding.timestamp)
+
+        hours, remainder = divmod(timestamp.seconds, 3600)
+        minutes, seconds = divmod(remainder, 60)
+        formatted_timestamp = "{:02}:{:02}:{:02}".format(
+            int(hours), int(minutes), int(seconds)
+        )
+
+        base_name, extension = os.path.splitext(document.title)
+        if extension == ".mp4" or extension == ".mpeg" or extension == ".webm":
+            filepath = os.path.join(upload_dir, document.title)
+            new_extension = ".jpg"
+
+            new_file_name = f"{base_name}-{formatted_timestamp}"
+            new_filepath = os.path.join(upload_dir, new_file_name + new_extension)
+
+            time = best_embedding.timestamp * 1000
+
+            video_capture = cv2.VideoCapture(filepath)
+            video_capture.set(cv2.CAP_PROP_POS_MSEC, time)
+            success, image = video_capture.read()
+
+            if success:
+                cv2.imwrite(new_filepath, image)
+                with open(new_filepath, "rb") as image_file:
+                    base64_image = base64.b64encode(image_file.read()).decode("utf-8")
+
+    else:
+        formatted_timestamp = None
 
     return (
         jsonify(
@@ -768,13 +1206,116 @@ def get_resource_info():
                 "topic_id": document.topic_id,
                 "link": document.link,
                 "keywords": document.keywords,
-                "content": best_embedding,
-                "topics": [course.name, topic.name]
+                "content": best_embedding.split_content,
+                "topics": [course.name, topic.name],
+                "page": best_embedding.page,
+                "page_image": base64_image,
+                "timestamp": formatted_timestamp,
+                "label": document.label,
                 # "topics": [course.name, topic.name, sub_topic.name],
             }
         ),
         200,
     )
+
+
+@app.route("/get-all-resources", methods=["GET"])
+@token_required
+def get_all_resources():
+    user_id = (
+        db.session.query(models.User.id)
+        .filter(models.User.username == g.user)
+        .first()[0]
+    )
+    upload_dir = os.path.join("uploads", str(user_id))
+
+    # Create a dictionary to store the results, indexed by document ID
+    results_dict = {}
+
+    # Perform a join between Embeddings, Document, Topic, and Course tables
+    results = db.session.query(
+        models.Embeddings, models.Document, models.Topic, models.Course
+    )
+    results = results.join(
+        models.Document, models.Embeddings.document_id == models.Document.id
+    )
+    results = results.join(models.Topic, models.Document.topic_id == models.Topic.id)
+    results = results.join(models.Course, models.Topic.course_id == models.Course.id)
+    results = results.join(
+        models.OwnsDocument, models.OwnsDocument.document_id == models.Document.id
+    )
+
+    # Filter by user_id
+    results = results.filter(
+        models.OwnsDocument.user_id == user_id, models.Document.deleted == False
+    )
+
+    doc_ids = []
+    for result in results:
+        embedding, document, course, topic = result
+        doc_id = document.id
+        base64_image = None
+
+        # Check if this document ID is already in the results_dict
+        if doc_id not in results_dict:
+            doc_ids.append(doc_id)
+            if (
+                document.type == "pdf"
+                or document.type == "ppt"
+                or document.type == "doc"
+            ):
+                filename = document.title.split(".")[0] + ".png"
+                preview_path = os.path.join(upload_dir, filename)
+
+                with open(preview_path, "rb") as image_file:
+                    base64_image = base64.b64encode(image_file.read()).decode("utf-8")
+
+            if document.type == "youtube":
+                filename = document.title + ".jpg"
+                filepath = os.path.join(upload_dir, filename)
+
+                with open(filepath, "rb") as image_file:
+                    base64_image = base64.b64encode(image_file.read()).decode("utf-8")
+
+            if embedding.timestamp:
+                timestamp = timedelta(seconds=embedding.timestamp)
+
+                hours, remainder = divmod(timestamp.seconds, 3600)
+                minutes, seconds = divmod(remainder, 60)
+                formatted_timestamp = "{:02}:{:02}:{:02}".format(
+                    int(hours), int(minutes), int(seconds)
+                )
+
+                base_name, extension = os.path.splitext(document.title)
+                if extension == ".mp4" or extension == ".mpeg" or extension == ".webm":
+                    new_extension = ".jpg"
+                    preview_path = os.path.join(upload_dir, base_name + new_extension)
+                    with open(preview_path, "rb") as image_file:
+                        base64_image = base64.b64encode(image_file.read()).decode(
+                            "utf-8"
+                        )
+
+            else:
+                formatted_timestamp = None
+
+            results_dict[doc_id] = {
+                "title": document.title,
+                "type": document.type,
+                "content": embedding.split_content,
+                "doc_id": doc_id,
+                "keywords": document.keywords,
+                "course": course.name,
+                "topic": topic.name,
+                "page": embedding.page,
+                "page_image": base64_image,
+                "timestamp": formatted_timestamp,
+                "label": document.label,
+            }
+
+    # Convert the results_dict values to a list
+    response_data = list(results_dict.values())
+
+    return jsonify({"results": response_data}), 200
 
 
 @app.route("/course", methods=["GET"])
@@ -901,7 +1442,6 @@ def edit_topic():
         # Get the 'document_id' and 'topic' from the request's query parameters
         document_id = request.args.get("document_id")
         topic = request.args.get("topic")
-        print(topic)
 
         # Find the document with the given document_id
         document = (
@@ -1035,6 +1575,50 @@ def preprocess_text(
     return processed_text
 
 
+def convert_pdf_page_to_image(pdf_path, page_number, output_image_path):
+    # Open the PDF file
+    pdf_document = fitz.open(pdf_path)
+
+    # Get the specified page
+    pdf_page = pdf_document.load_page(page_number - 1)
+
+    # Create an image of the page
+    image = pdf_page.get_pixmap()
+
+    # Save the image to a file
+    image.save(output_image_path)
+
+    # Close the PDF document
+    pdf_document.close()
+
+
+def token_required(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        token = None
+
+        if "Authorization" in request.headers:
+            auth_header = request.headers["Authorization"]
+            token = (
+                auth_header.split(" ")[1] if auth_header.startswith("Bearer ") else None
+            )
+
+        if not token:
+            return jsonify({"message": "Token is missing"}), 401
+
+        try:
+            data = jwt.decode(token, app.config["SECRET_KEY"], algorithms=["HS256"])
+            g.user = data["identity"]  # Store the user identity in Flask's context 'g'
+        except jwt.ExpiredSignatureError:
+            return jsonify({"message": "Token has expired"}), 401
+        except jwt.InvalidTokenError:
+            return jsonify({"message": "Invalid token"}), 401
+
+        return f(*args, **kwargs)
+
+    return decorated
+
+
 def get_keywords(docs):
     keyword_set = set()
 
@@ -1102,7 +1686,7 @@ def login():
         token = jwt.encode(
             {
                 "identity": user["username"],
-                "exp": datetime.utcnow() + timedelta(weeks=1),
+                "exp": datetime.utcnow() + timedelta(days=60),
             },
             app.config["SECRET_KEY"],
             algorithm="HS256",
@@ -1125,3 +1709,138 @@ def register():
     db.session.commit()
 
     return "New user added"
+
+
+@app.route("/dashboard", methods=["GET"])
+def getDashboard():
+    course_data = []
+
+    courses = db.session.query(models.Course).all()
+
+    for course in courses:
+        course_entry = {"id": course.id, "course": course.name, "resources": []}
+
+        for topic in course.children:
+            for document in sorted(
+                topic.children, key=lambda x: x.date_created, reverse=True
+            ):
+
+                popularity = (
+                    db.session.query(func.count(models.OwnsDocument.user_id))
+                    .join(
+                        models.Document,
+                        models.OwnsDocument.document_id == models.Document.id,
+                    )
+                    .filter(models.Document.content == document.content)
+                    .distinct()
+                    .scalar()
+                )
+                document_entry = {
+                    "id": document.id,
+                    "title": document.title,
+                    "topic": document.topic.name,
+                    "rating": document.ratings,
+                    "popularity": popularity,
+                    "link": document.link,
+                    "comment": document.comment,
+                }
+
+                course_entry["resources"].append(document_entry)
+
+        course_data.append(course_entry)
+
+    return jsonify(course_data)
+
+
+@app.route("/rating", methods=["PUT"])
+def edit_rating():
+    try:
+        document_id = request.args.get("document_id")
+        rating = request.args.get("rating")
+
+        document = (
+            db.session.query(models.Document)
+            .filter(models.Document.id == document_id)
+            .first()
+        )
+
+        if not document:
+            return jsonify({"error": "Document not found"}), 404
+
+        document.ratings = rating
+        db.session.commit()
+
+        return jsonify(
+            {
+                "message": f'Rating for document with ID {document_id} updated to "{rating}"'
+            }
+        )
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500  # 500 Internal Server Error
+
+
+@app.route("/comment", methods=["POST"])
+def add_comment():
+    try:
+        document_id = request.args.get("document_id")
+        comment = request.args.get("comment")
+
+        document = (
+            db.session.query(models.Document)
+            .filter(models.Document.id == document_id)
+            .first()
+        )
+
+        if not document:
+            return jsonify({"error": "Document not found"}), 404
+
+        document.comment = comment
+        db.session.commit()
+
+        return jsonify(
+            {"message": f"Comment added for document with ID {document_id}."}
+        )
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500  # 500 Internal Server Error
+
+
+@app.route("/get-all-courses", methods=["GET"])
+def filter_type():
+    courses = db.session.query(models.Course.name).all()
+
+    if not courses:
+        return jsonify({"error": "Topic not found"}), 404
+
+    course_list = [course.name for course in courses]
+
+    return jsonify({"topics": course_list}), 200
+
+
+@app.route("/update-label", methods=["PUT"])
+def update_label():
+    try:
+        document_id = request.args.get("document_id")
+        label = request.args.get("label")
+
+        document = (
+            db.session.query(models.Document)
+            .filter(models.Document.id == document_id)
+            .first()
+        )
+
+        if not document:
+            return jsonify({"error": "Document not found"}), 404
+
+        document.label = label
+        db.session.commit()
+
+        return jsonify(
+            {
+                "message": f'Label for document with ID {document_id} updated to "{label}"'
+            }
+        )
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500  # 500 Internal Server Error
