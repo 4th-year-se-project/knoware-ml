@@ -18,6 +18,7 @@ class User(Base):
     name = mapped_column(String)
     username = mapped_column(String)
     password = mapped_column(String)
+    type = mapped_column(String)
 
 
 class Course(Base):

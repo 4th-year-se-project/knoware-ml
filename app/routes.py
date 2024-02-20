@@ -155,7 +155,7 @@ def launch():
     if not user:
         # add new user
         user = models.User(
-            name=name, username=email, password=sha256_crypt.hash("password")
+            name=name, username=email, password=sha256_crypt.hash("password"), type="student"
         )
         db.session.add(user)
         db.session.commit()
@@ -1943,7 +1943,7 @@ def register():
     password = data.get("password")
 
     encrypted_passwored = sha256_crypt.encrypt(password)
-    new_user = models.User(name=name, username=email, password=encrypted_passwored)
+    new_user = models.User(name=name, username=email, password=encrypted_passwored, type="lecturer")
     db.session.add(new_user)
     db.session.commit()
 
