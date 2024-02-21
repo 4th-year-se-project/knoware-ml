@@ -155,7 +155,10 @@ def launch():
     if not user:
         # add new user
         user = models.User(
-            name=name, username=email, password=sha256_crypt.hash("password"), type="student"
+            name=name,
+            username=email,
+            password=sha256_crypt.hash("password"),
+            type="student",
         )
         db.session.add(user)
         db.session.commit()
@@ -728,13 +731,12 @@ def embed_docx():
         original_filepath = os.path.join(upload_dir, filename)
         file.save(original_filepath)
 
-        if user_id == 1:
-            print(f"File extension: {os.path.splitext(filename)[-1]}")
+        print(f"File extension: {os.path.splitext(filename)[-1]}")
 
-            # Convert to PDF
-            pdf_filename = os.path.splitext(filename)[0] + ".pdf"
-            pdf_filepath = os.path.join(upload_dir, pdf_filename)
-            convert_to_pdf(original_filepath, pdf_filepath)
+        # Convert to PDF
+        pdf_filename = os.path.splitext(filename)[0] + ".pdf"
+        pdf_filepath = os.path.join(upload_dir, pdf_filename)
+        convert_to_pdf(original_filepath, pdf_filepath)
 
         # Load and process the docx content
         documents = loader.load_data(
@@ -844,27 +846,35 @@ def search():
         models.Embeddings.embedding.cosine_distance(query_embedding)
     )
 
-    if(filter_file_format):
+    if filter_file_format:
         results = results.filter(models.Document.type == filter_file_format)
 
-    if(filter_label):
+    if filter_label:
         results = results.filter(models.Document.label == filter_label)
 
-    if(filter_date):
+    if filter_date:
         current_date = datetime.now()
 
-        if filter_date == '1 day ago':
-            results = results.filter(models.Document.date_created >= current_date - timedelta(days=1))
+        if filter_date == "1 day ago":
+            results = results.filter(
+                models.Document.date_created >= current_date - timedelta(days=1)
+            )
 
-        if filter_date == '2 days ago':
-            results = results.filter(models.Document.date_created >= current_date - timedelta(days=2))
+        if filter_date == "2 days ago":
+            results = results.filter(
+                models.Document.date_created >= current_date - timedelta(days=2)
+            )
 
-        if filter_date == '1 week ago':
-            results = results.filter(models.Document.date_created >= current_date - timedelta(weeks=1))
+        if filter_date == "1 week ago":
+            results = results.filter(
+                models.Document.date_created >= current_date - timedelta(weeks=1)
+            )
 
-        if filter_date == '1 month ago':
-            results = results.filter(models.Document.date_created >= current_date - timedelta(weeks=2))
-    
+        if filter_date == "1 month ago":
+            results = results.filter(
+                models.Document.date_created >= current_date - timedelta(weeks=2)
+            )
+
     doc_ids = []
     for result in results:
         embedding, document, course, topic = result
@@ -873,9 +883,10 @@ def search():
 
         # Check if this document ID is already in the results_dict
         if doc_id not in results_dict:
-            if(filter_course):
-                if(topic.name != filter_course): continue
-            
+            if filter_course:
+                if topic.name != filter_course:
+                    continue
+
             doc_ids.append(doc_id)
             if embedding.timestamp:
                 timestamp = timedelta(seconds=float(embedding.timestamp))
@@ -1943,7 +1954,9 @@ def register():
     password = data.get("password")
 
     encrypted_passwored = sha256_crypt.encrypt(password)
-    new_user = models.User(name=name, username=email, password=encrypted_passwored, type="lecturer")
+    new_user = models.User(
+        name=name, username=email, password=encrypted_passwored, type="lecturer"
+    )
     db.session.add(new_user)
     db.session.commit()
 
@@ -2034,6 +2047,7 @@ def add_comment():
             return jsonify({"error": "Document not found"}), 404
 
         document.comment = comment
+        document.comment_date_added = datetime.utcnow()
         db.session.commit()
 
         return jsonify(
@@ -2065,6 +2079,7 @@ def add_embedding_comment():
             return jsonify({"error": "Embedding not found"}), 404
 
         embedding.comment = comment
+        embedding.comment_date_added = datetime.utcnow()
         db.session.commit()
 
         return jsonify(
@@ -2080,8 +2095,14 @@ def add_embedding_comment():
 @token_required
 def get_all_comments():
     try:
-        all_comments = []
+        all_comments = {
+            "embeddingComment": [],
+            "otherEmbeddingComments": [],
+            "lecturerComment": [],
+        }
+
         document_id = request.args.get("document_id")
+        embedding_id = request.args.get("embedding_id")
 
         document = (
             db.session.query(models.Document)
@@ -2096,21 +2117,54 @@ def get_all_comments():
         if document.comment:
             document_comment = {
                 "comment": document.comment,
-                "timestamp": None,  # or use a different timestamp if available
+                "timestamp": None,  
                 "is_lecturer_comment": True,
-                "page_number": None,  # Adjust this if you have page numbers for lecturer comments
+                "page_number": None, 
+                "comment_date_added": document.comment_date_added
             }
 
-            all_comments.append(document_comment)
+            all_comments["lecturerComment"].append(document_comment)
 
-        embeddings_comments = (
-            db.session.query(models.Embeddings).filter_by(document_id=document_id).all()
+        embedding= (
+            db.session.query(models.Embeddings)
+            .filter_by(document_id=document_id, id=embedding_id)
+            .first()
         )
-
-        for embedding in embeddings_comments:
+        if embedding.comment:
             page = None
             formatted_timestamp = None
+            if embedding.timestamp is not None:
+                timestamp = timedelta(seconds=embedding.timestamp)
+                hours, remainder = divmod(timestamp.seconds, 3600)
+                minutes, seconds = divmod(remainder, 60)
+                formatted_timestamp = "{:02}:{:02}:{:02}".format(
+                    int(hours), int(minutes), int(seconds)
+                )
+            if embedding.page:
+                page = embedding.page
+
+            all_comments["embeddingComment"].append(
+                {
+                    "comment": embedding.comment,
+                    "timestamp": formatted_timestamp,
+                    "is_lecturer_comment": False,
+                    "page_number": page,
+                    "comment_date_added": embedding.comment_date_added
+                }
+            )
+
+        other_embeddings = (
+            db.session.query(models.Embeddings)
+            .filter(models.Embeddings.document_id == document_id, models.Embeddings.id != embedding_id)
+            .all()
+        )
+        
+
+        for embedding in other_embeddings:
             if embedding.comment:
+                page = None
+                formatted_timestamp = None
+                
                 if embedding.timestamp:
                     timestamp = timedelta(seconds=embedding.timestamp)
                     hours, remainder = divmod(timestamp.seconds, 3600)
@@ -2121,12 +2175,13 @@ def get_all_comments():
                 if embedding.page:
                     page = embedding.page
 
-                all_comments.append(
+                all_comments["otherEmbeddingComments"].append(
                     {
                         "comment": embedding.comment,
                         "timestamp": formatted_timestamp,
                         "is_lecturer_comment": False,
                         "page_number": page,
+                        "comment_date_added": embedding.comment_date_added
                     }
                 )
 
@@ -2172,7 +2227,6 @@ def handle_course():
             )
             db.session.add(course)
 
-            # Iterate through the topics within each course and create Topics with Subtopics as children
             for topic_data in course_data["topics"]:
                 topic = models.Topic(name=topic_data["topicName"])
                 course.children.append(topic)
@@ -2184,9 +2238,9 @@ def handle_course():
 
         db.session.commit()
         return jsonify(message="Course details added successfully")
-    
+
     except Exception as e:
-        return jsonify({"error": str(e)}), 500 
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/get-all-courses", methods=["GET"])
