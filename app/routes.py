@@ -1411,7 +1411,7 @@ def get_resource_info():
     )
 
 
-@app.route("/get-all-resources", methods=["GET"])
+@app.route("/get_all_resources", methods=["GET"])
 @token_required
 def get_all_resources():
     user_id = (
