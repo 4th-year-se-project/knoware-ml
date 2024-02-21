@@ -99,8 +99,19 @@ class Embeddings(Base):
     document_id = mapped_column(ForeignKey("document.id", ondelete="CASCADE"))
     timestamp = mapped_column(Float)
     page = mapped_column(Integer)
-    comment = mapped_column(Text, default=None)
+
+    children = relationship("Comments", back_populates="embedding")
+
+class Comments(Base):
+    __tablename__ = "comments"
+
+    id = mapped_column(Integer, primary_key=True)
+    embedding_id = mapped_column(ForeignKey("embeddings.id", ondelete="CASCADE"))
+    comment = mapped_column(Text)
     comment_date_added = mapped_column(DateTime)
+
+    # Establishing a many-to-one relationship with Embeddings
+    embedding = relationship("Embeddings", back_populates="children")
 
 class QueryLog(Base):
     __tablename__ = "query_logs"

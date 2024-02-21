@@ -2077,18 +2077,56 @@ def add_embedding_comment():
 
         if not embedding:
             return jsonify({"error": "Embedding not found"}), 404
+        
+        new_comment = models.Comments(
+            comment=comment,
+            comment_date_added=datetime.utcnow(),
+        )
 
-        embedding.comment = comment
-        embedding.comment_date_added = datetime.utcnow()
+        embedding.children.append(new_comment)
+
         db.session.commit()
 
         return jsonify(
-            {"message": f"Comment added for document with ID {document_id}."}
+            {
+                "message": f"Comment added for document with ID {document_id} and embedding with ID {embedding_id}."
+            }
         )
 
     except Exception as e:
         print(f"Error: {e}")
         return jsonify({"error": str(e)}), 500  # 500 Internal Server Error
+
+
+# def add_embedding_comment():
+#     try:
+#         document_id = request.args.get("document_id")
+#         embedding_id = request.args.get("embedding_id")
+#         comment = request.args.get("comment")
+
+#         embedding = (
+#             db.session.query(models.Embeddings)
+#             .filter(
+#                 models.Embeddings.document_id == document_id,
+#                 models.Embeddings.id == embedding_id,
+#             )
+#             .first()
+#         )
+
+#         if not embedding:
+#             return jsonify({"error": "Embedding not found"}), 404
+
+#         embedding.comment = comment
+#         embedding.comment_date_added = datetime.utcnow()
+#         db.session.commit()
+
+#         return jsonify(
+#             {"message": f"Comment added for document with ID {document_id}."}
+#         )
+
+#     except Exception as e:
+#         print(f"Error: {e}")
+#         return jsonify({"error": str(e)}), 500  # 500 Internal Server Error
 
 
 @app.route("/get_all_comments", methods=["GET"])
@@ -2117,73 +2155,86 @@ def get_all_comments():
         if document.comment:
             document_comment = {
                 "comment": document.comment,
-                "timestamp": None,  
+                "timestamp": None,
                 "is_lecturer_comment": True,
-                "page_number": None, 
-                "comment_date_added": document.comment_date_added
+                "page_number": None,
+                "comment_date_added": document.comment_date_added,
             }
 
             all_comments["lecturerComment"].append(document_comment)
-
-        embedding= (
+            
+        embedding = (
             db.session.query(models.Embeddings)
-            .filter_by(document_id=document_id, id=embedding_id)
+            .filter(
+                models.Embeddings.document_id == document_id,
+                models.Embeddings.id == embedding_id,
+            )
             .first()
         )
-        if embedding.comment:
+        if not embedding:
+            return jsonify({"error": "Embedding not found"}), 404
+
+        embedding_comments = embedding.children  
+        for comment in embedding_comments:
             page = None
             formatted_timestamp = None
-            if embedding.timestamp is not None:
+
+            if embedding.timestamp:
                 timestamp = timedelta(seconds=embedding.timestamp)
                 hours, remainder = divmod(timestamp.seconds, 3600)
                 minutes, seconds = divmod(remainder, 60)
                 formatted_timestamp = "{:02}:{:02}:{:02}".format(
                     int(hours), int(minutes), int(seconds)
                 )
+
             if embedding.page:
                 page = embedding.page
 
             all_comments["embeddingComment"].append(
                 {
-                    "comment": embedding.comment,
+                    "comment": comment.comment,
                     "timestamp": formatted_timestamp,
                     "is_lecturer_comment": False,
                     "page_number": page,
-                    "comment_date_added": embedding.comment_date_added
+                    "comment_date_added": comment.comment_date_added,
                 }
             )
 
         other_embeddings = (
             db.session.query(models.Embeddings)
-            .filter(models.Embeddings.document_id == document_id, models.Embeddings.id != embedding_id)
+            .filter(
+                models.Embeddings.document_id == document_id,
+                models.Embeddings.id != embedding_id,
+            )
             .all()
         )
-        
 
-        for embedding in other_embeddings:
-            if embedding.comment:
-                page = None
-                formatted_timestamp = None
-                
-                if embedding.timestamp:
-                    timestamp = timedelta(seconds=embedding.timestamp)
-                    hours, remainder = divmod(timestamp.seconds, 3600)
-                    minutes, seconds = divmod(remainder, 60)
-                    formatted_timestamp = "{:02}:{:02}:{:02}".format(
-                        int(hours), int(minutes), int(seconds)
+        for other_embedding in other_embeddings:
+            other_embedding_comments = other_embedding.children
+            if other_embedding_comments:
+                for comment in other_embedding_comments:
+                    page = None
+                    formatted_timestamp = None
+
+                    if other_embedding.timestamp:
+                        timestamp = timedelta(seconds=other_embedding.timestamp)
+                        hours, remainder = divmod(timestamp.seconds, 3600)
+                        minutes, seconds = divmod(remainder, 60)
+                        formatted_timestamp = "{:02}:{:02}:{:02}".format(
+                            int(hours), int(minutes), int(seconds)
+                        )
+                    if other_embedding.page:
+                        page = other_embedding.page
+
+                    all_comments["otherEmbeddingComments"].append(
+                        {
+                            "comment": comment.comment,
+                            "timestamp": formatted_timestamp,
+                            "is_lecturer_comment": False,
+                            "page_number": page,
+                            "comment_date_added": comment.comment_date_added,
+                        }
                     )
-                if embedding.page:
-                    page = embedding.page
-
-                all_comments["otherEmbeddingComments"].append(
-                    {
-                        "comment": embedding.comment,
-                        "timestamp": formatted_timestamp,
-                        "is_lecturer_comment": False,
-                        "page_number": page,
-                        "comment_date_added": embedding.comment_date_added
-                    }
-                )
 
         return jsonify({"comments": all_comments})
 
