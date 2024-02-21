@@ -2098,37 +2098,6 @@ def add_embedding_comment():
         return jsonify({"error": str(e)}), 500  # 500 Internal Server Error
 
 
-# def add_embedding_comment():
-#     try:
-#         document_id = request.args.get("document_id")
-#         embedding_id = request.args.get("embedding_id")
-#         comment = request.args.get("comment")
-
-#         embedding = (
-#             db.session.query(models.Embeddings)
-#             .filter(
-#                 models.Embeddings.document_id == document_id,
-#                 models.Embeddings.id == embedding_id,
-#             )
-#             .first()
-#         )
-
-#         if not embedding:
-#             return jsonify({"error": "Embedding not found"}), 404
-
-#         embedding.comment = comment
-#         embedding.comment_date_added = datetime.utcnow()
-#         db.session.commit()
-
-#         return jsonify(
-#             {"message": f"Comment added for document with ID {document_id}."}
-#         )
-
-#     except Exception as e:
-#         print(f"Error: {e}")
-#         return jsonify({"error": str(e)}), 500  # 500 Internal Server Error
-
-
 @app.route("/get_all_comments", methods=["GET"])
 @token_required
 def get_all_comments():
