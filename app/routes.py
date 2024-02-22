@@ -958,7 +958,8 @@ def search():
                 "page": embedding.page,
                 "page_image": base64_image,
                 "timestamp": formatted_timestamp,
-                "isRecommended": False
+                "isRecommended": False,
+                "label": document.label
             }
 
     # Convert the results_dict values to a list
