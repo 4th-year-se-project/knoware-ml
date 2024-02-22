@@ -1503,6 +1503,7 @@ def get_all_resources():
                 "page_image": base64_image,
                 "timestamp": formatted_timestamp,
                 "label": document.label,
+                "link": document.link
             }
 
     # Convert the results_dict values to a list
