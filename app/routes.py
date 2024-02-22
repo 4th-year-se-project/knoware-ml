@@ -958,6 +958,7 @@ def search():
                 "page": embedding.page,
                 "page_image": base64_image,
                 "timestamp": formatted_timestamp,
+                "isRecommended": False
             }
 
     # Convert the results_dict values to a list
@@ -1094,6 +1095,7 @@ def search_recommendation():
                 "page": embedding.page,
                 "page_image": base64_image,
                 "timestamp": formatted_timestamp,
+                "isRecommeded": True
             }
 
     # Convert the results_dict values to a list
@@ -1261,13 +1263,13 @@ def search_similar_resource():
                 base64_image = base64.b64encode(image_file.read()).decode("utf-8")
 
         results_dict[existing_doc_id] = {
-            "document_title": recommending_doc_title,
+            "title": recommending_doc_title,
             "type": recommending_doc_type,
             "content": embedding.split_content,
             "document_owner": document_owners[0],
-            "document_id": result.existing_document_id,
+            "doc_id": result.existing_document_id,
             "course": course_name,
-            "topic_name": resource_topic.name,
+            "topic": resource_topic.name,
             "page": embedding.page,
             "page_image": base64_image,
             "timestamp": formatted_timestamp,
@@ -1277,6 +1279,8 @@ def search_similar_resource():
             "similarity_weight": (user_count / all_users)
             * result.similarity_score
             * (recommending_doc_ratings / 5),
+            "keywords":"",
+            "isRecommended": True
         }
 
     response_data = list(results_dict.values())[:5]
@@ -1382,7 +1386,7 @@ def get_resource_info():
                 cv2.imwrite(new_filepath, image)
                 with open(new_filepath, "rb") as image_file:
                     base64_image = base64.b64encode(image_file.read()).decode("utf-8")
-        url = "http://localhost:8080"
+        url = "http://localhost:8081"
         file_url = f"{url}/getmedia/{document.id}/{document.title}"
         print(file_url)
 
@@ -1503,7 +1507,8 @@ def get_all_resources():
                 "page_image": base64_image,
                 "timestamp": formatted_timestamp,
                 "label": document.label,
-                "link": document.link
+                "link": document.link,
+                "isRecommended": False
             }
 
     # Convert the results_dict values to a list
