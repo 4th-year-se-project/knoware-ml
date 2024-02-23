@@ -27,6 +27,8 @@ class Course(Base):
     id = mapped_column(Integer, primary_key=True)
     name = mapped_column(String)
     code = mapped_column(String)
+    user_id = mapped_column(ForeignKey("user.id"))
+    user = relationship("User")
     children = relationship("Topic", back_populates="course")
 
 

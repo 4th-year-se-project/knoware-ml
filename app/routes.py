@@ -959,7 +959,8 @@ def search():
                 "page_image": base64_image,
                 "timestamp": formatted_timestamp,
                 "isRecommended": False,
-                "label": document.label
+                "label": document.label,
+                "link": document.link
             }
 
     # Convert the results_dict values to a list
@@ -1953,28 +1954,69 @@ def login():
         return jsonify({"message": "Invalid username or password"}), 401
 
 
+# @app.route("/register", methods=["POST"])
+# def register():
+#     data = request.json
+#     name = data.get("name")
+#     email = data.get("email")
+#     password = data.get("password")
+
+#     encrypted_passwored = sha256_crypt.encrypt(password)
+#     new_user = models.User(
+#         name=name, username=email, password=encrypted_passwored, type="lecturer"
+#     )
+#     db.session.add(new_user)
+#     db.session.commit()
+
+#     return "New user added"
+    
 @app.route("/register", methods=["POST"])
 def register():
-    data = request.json
-    name = data.get("name")
-    email = data.get("email")
-    password = data.get("password")
+    try:
+        data = request.json
+        name = data.get("name")
+        email = data.get("email")
+        password = data.get("password")
 
-    encrypted_passwored = sha256_crypt.encrypt(password)
-    new_user = models.User(
-        name=name, username=email, password=encrypted_passwored, type="lecturer"
-    )
-    db.session.add(new_user)
-    db.session.commit()
+        # Check if the email already exists
+        existing_user = (
+            db.session.query(models.User)
+            .filter(models.User.username == email)
+            .first()
+        )
+        if existing_user:
+            return jsonify({"error": "Email already exists"}), 400
 
-    return "New user added"
+        # Encrypt the password
+        encrypted_password = sha256_crypt.encrypt(password)
+
+        # Create a new user
+        new_user = models.User(
+            name=name, username=email, password=encrypted_password, type="lecturer"
+        )
+
+        # Add the user to the database
+        db.session.add(new_user)
+        db.session.commit()
+
+        return "New user added"
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 
 
 @app.route("/dashboard", methods=["GET"])
+@token_required
 def getDashboard():
     course_data = []
+    user_id = (
+            db.session.query(models.User.id)
+            .filter(models.User.username == g.user)
+            .first()[0]
+    )
 
-    courses = db.session.query(models.Course).all()
+    courses = db.session.query(models.Course).filter(models.Course.user_id == user_id).all()
 
     for course in courses:
         course_entry = {"id": course.id, "course": course.name, "resources": []}
@@ -2011,6 +2053,7 @@ def getDashboard():
 
 
 @app.route("/rating", methods=["PUT"])
+@token_required
 def edit_rating():
     try:
         document_id = request.args.get("document_id")
@@ -2039,6 +2082,7 @@ def edit_rating():
 
 
 @app.route("/comment", methods=["POST"])
+@token_required
 def add_comment():
     try:
         document_id = request.args.get("document_id")
@@ -2220,10 +2264,16 @@ def get_all_comments():
 
 
 @app.route("/course", methods=["POST"])
+@token_required
 def handle_course():
     try:
         data = request.json
         courses = data.get("courses")
+        user_id = (
+            db.session.query(models.User.id)
+            .filter(models.User.username == g.user)
+            .first()[0]
+        )
 
         # course_name = data.get('courseName')
         # course_code = data.get('courseCode')
@@ -2250,7 +2300,7 @@ def handle_course():
 
         for course_data in courses:
             course = models.Course(
-                name=course_data["courseName"], code=course_data["courseCode"]
+                name=course_data["courseName"], code=course_data["courseCode"], user_id=user_id
             )
             db.session.add(course)
 
