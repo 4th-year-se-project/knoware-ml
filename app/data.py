@@ -3,7 +3,7 @@
 # Define course data as a list of courses, where each course has topics
 course_data = [
     {
-        "name": "Database",
+        "name": "Introduction to Algorithms",
         "code": "SCS 4201",
         "topics": [
             {
@@ -39,11 +39,11 @@ course_data = [
         ],
     },
     {
-        "name": "Introduction to Algorithms",
-        "code": "SCS 3208",
+        "name": "Database",
+        "code": "SCS 4208",
         "topics": [
             {
-                "name": "Introduction to Distributed Systems",
+                "name": "Database Security",
                 "subtopics": [
                     "Importance of Human‐Computer Interaction",
                     "Components of HCI Model",
@@ -55,7 +55,7 @@ course_data = [
                 "duration": 1,  # Duration in hours
             },
             {
-                "name": "Introduction to Middleware",
+                "name": "Indexing",
                 "subtopics": [
                     "Interactivity",
                     "Richer interaction",
@@ -66,7 +66,7 @@ course_data = [
                 "duration": 1,  # Duration in hours
             },
             {
-                "name": "Middleware and Architectural Patterns",
+                "name": "Query Optimization",
                 "subtopics": [
                     "Batch processing",
                     "Timesharing",
@@ -78,6 +78,27 @@ course_data = [
                 ],
                 "duration": 2,  # Duration in hours
             },
+            {
+                "name": "Transaction Management",
+                "subtopics": [
+                    "Interaction Models",
+                    "Human Error",
+                    "Two gulfs in the interaction",
+                    "Ergonomics",
+                    "Interaction styles",
+                ],
+                "duration": 2,  # Duration in hours
+            },
+            {
+                "name": "Distributed Databases",
+                "subtopics": [
+                    "Golden rules of design",
+                    "Navigation design",
+                    "Screen design and layout",
+                    "User action and control",
+                ],
+                "duration": 2,  # Duration in hours
+            }
         ],
     },
     {
